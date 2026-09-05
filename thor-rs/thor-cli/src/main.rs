@@ -8,8 +8,10 @@
 //! Everything here is non-destructive. Flashing lands in later milestones.
 
 use std::error::Error;
+use std::io::Read;
 use std::process::ExitCode;
 
+use thor_core::archive::{list_tar, lz4_content_size};
 use thor_core::backend::{self, NusbTransport};
 use thor_core::flash::{plan_flash, FlashParams};
 use thor_core::odin::Odin;
@@ -21,6 +23,7 @@ fn main() -> ExitCode {
         Some("list") => cmd_list(),
         Some("dump-pit") => cmd_dump_pit(args.get(2)),
         Some("print-pit") => cmd_print_pit(args.get(2)),
+        Some("tar-list") => cmd_tar_list(args.get(2)),
         Some("flash-plan") => cmd_flash_plan(&args[2..]),
         _ => {
             print_usage();
@@ -43,9 +46,25 @@ fn print_usage() {
          \x20 thor list                 List connected Samsung devices\n\
          \x20 thor dump-pit <out.pit>   Dump the device's partition table to a file\n\
          \x20 thor print-pit [file]     Print a PIT (from a file, or dumped live)\n\
-         \x20 thor flash-plan <file> [partition]\n\
+         \x20 thor tar-list <archive>   List the files in an Odin .tar / .tar.md5 archive\n\
+         \x20 thor flash-plan [--pit <pit>] <file> [partition]\n\
          \x20                           Dry run: show what flashing <file> would do (no writes)\n"
     );
+}
+
+fn cmd_tar_list(path: Option<&String>) -> Result<(), Box<dyn Error>> {
+    let path = path.ok_or("usage: thor tar-list <archive.tar[.md5]>")?;
+    let entries = list_tar(std::fs::File::open(path)?)?;
+    if entries.is_empty() {
+        println!("No top-level files in {path}.");
+        return Ok(());
+    }
+    println!("{} file(s) in {path}:", entries.len());
+    for e in &entries {
+        let note = if e.name.ends_with(".lz4") { "  (LZ4-compressed)" } else { "" };
+        println!("  {:>12} bytes  {}{note}", e.size, e.name);
+    }
+    Ok(())
 }
 
 /// Connect to the first Samsung device and begin an Odin session.
@@ -141,16 +160,26 @@ fn cmd_flash_plan(args: &[String]) -> Result<(), Box<dyn Error>> {
         .ok_or("usage: thor flash-plan [--pit <pit>] <file> [partition]")?;
     let partition = positional.get(1).copied();
 
-    let len = std::fs::metadata(file)?.len() as i64;
+    let mut len = std::fs::metadata(file)?.len() as i64;
     let base = std::path::Path::new(file)
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or(file);
     if base.ends_with(".lz4") {
-        println!(
-            "note: {base} is LZ4-compressed — the on-device size differs from the file size \
-             (decompression isn't wired yet); planning against the raw file size.\n"
-        );
+        // The size that matters is the decompressed (on-device) size, read cheaply from the
+        // LZ4 frame header rather than by decompressing the whole file.
+        let mut hdr = [0u8; 16];
+        let n = std::fs::File::open(file)?.read(&mut hdr)?;
+        match lz4_content_size(&hdr[..n]) {
+            Some(sz) => {
+                println!("LZ4: {len} compressed bytes → {sz} bytes on device (frame header)\n");
+                len = sz as i64;
+            }
+            None => println!(
+                "note: {base} is LZ4 but carries no content-size header; planning against the \
+                 compressed size — the real on-device size will differ.\n"
+            ),
+        }
     }
 
     // Get the PIT and the flash params — live from the device, or offline from a PIT file

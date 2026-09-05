@@ -76,5 +76,17 @@ packaging). See [rust-milestone-1.md](rust-milestone-1.md) for M1.
 
 **Remaining before a live flash:**
 - `flashFile` (the actual live write) + interactive confirmations — gated until we agree a
-  **safe target** (flash a partition's own dumped bytes back, or use a spare device).
+  **safe target** (real signed stock firmware, or a spare device). Note: Odin has no
+  partition-read, so "dump and flash back unchanged" is not available as a safety net.
 - Session end/reboot (0x67 region) for clean teardown — small, likely folded into M3.
+
+### M4 status (2026-09-05) — archive + LZ4 core done
+
+- `archive` module: `lz4_content_size` (reads the decompressed size cheaply from the LZ4
+  frame header), `decompress_lz4`, and `list_tar` / `extract_tar` (generic over `Read`, so a
+  `File` streams instead of buffering multi-GB firmware). 6 unit tests against data built with
+  the real `lz4_flex` / `tar` crates.
+- CLI: `thor tar-list <archive>` lists an Odin `.tar`/`.tar.md5`; `flash-plan` now resolves a
+  `.lz4` file's real on-device size. Demoed: a 12 KB `boot.img.lz4` → 3,145,728 bytes → 3 parts.
+- **Next M4 increment:** whole-archive planning/flashing (match each contained partition to the
+  PIT, handle `.lz4` entries) — the building blocks are all in place.
