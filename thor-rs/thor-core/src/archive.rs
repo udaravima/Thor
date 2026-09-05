@@ -118,6 +118,46 @@ pub fn extract_tar<R: Read>(reader: R, name: &str) -> Result<Vec<u8>, ArchiveErr
     Err(ArchiveError::NotFound(name.to_string()))
 }
 
+/// Call `f` once for each top-level image in the archive, in archive order, passing the
+/// entry's name and a reader over its **decompressed** bytes (`.lz4` entries are decompressed
+/// on the fly). Streaming — an image is never held in memory in full, so this works for
+/// multi-GB firmware. The caller learns each image's decompressed length separately (from
+/// [`list_archive_images`]) since a `Read` carries no length.
+///
+/// Generic over the callback's error `E` (only needs to absorb an [`ArchiveError`]) so the
+/// caller can thread its own error type — e.g. a flash error — straight through.
+pub fn for_each_image<R, E, F>(reader: R, mut f: F) -> Result<(), E>
+where
+    R: Read,
+    E: From<ArchiveError>,
+    F: FnMut(&str, &mut dyn Read) -> Result<(), E>,
+{
+    let mut archive = tar::Archive::new(reader);
+    let entries = archive
+        .entries()
+        .map_err(|e| ArchiveError::Tar(e.to_string()))?;
+    for entry in entries {
+        let mut entry = entry.map_err(|e| ArchiveError::Tar(e.to_string()))?;
+        let name = entry
+            .path()
+            .map_err(|e| ArchiveError::Tar(e.to_string()))?
+            .to_string_lossy()
+            .into_owned();
+        // Top-level files only (matches list_archive_images / list_tar).
+        if name.contains('/') {
+            continue;
+        }
+        if name.ends_with(".lz4") {
+            // Decompress on the fly: the decoder reads the entry (frame header and all).
+            let mut dec = lz4_flex::frame::FrameDecoder::new(&mut entry);
+            f(&name, &mut dec)?;
+        } else {
+            f(&name, &mut entry)?;
+        }
+    }
+    Ok(())
+}
+
 /// One image inside a firmware archive, with its real (on-device) size resolved.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArchiveImage {
@@ -263,6 +303,29 @@ mod tests {
             extract_tar(&tar[..], "nope.img"),
             Err(ArchiveError::NotFound(_))
         ));
+    }
+
+    #[test]
+    fn for_each_image_streams_decompressed_bytes_in_order() {
+        let raw = b"DTBO-RAW-DATA";
+        let payload = b"boot image payload ".repeat(30);
+        let compressed = lz4_compress_with_size(&payload);
+        let tar = build_tar(&[("dtbo.img", raw), ("boot.img.lz4", &compressed)]);
+
+        let mut got: Vec<(String, Vec<u8>)> = Vec::new();
+        for_each_image::<_, ArchiveError, _>(&tar[..], |name, r| {
+            let mut buf = Vec::new();
+            r.read_to_end(&mut buf)
+                .map_err(|e| ArchiveError::Tar(e.to_string()))?;
+            got.push((name.to_string(), buf));
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(got.len(), 2);
+        // Order preserved; raw passed through; lz4 handed over decompressed.
+        assert_eq!(got[0], ("dtbo.img".to_string(), raw.to_vec()));
+        assert_eq!(got[1], ("boot.img.lz4".to_string(), payload));
     }
 
     #[test]

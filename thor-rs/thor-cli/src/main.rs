@@ -13,7 +13,9 @@ use std::error::Error;
 use std::io::{IsTerminal, Read, Seek, Write};
 use std::process::ExitCode;
 
-use thor_core::archive::{list_archive_images, list_tar, lz4_content_size, lz4_stream_reader};
+use thor_core::archive::{
+    for_each_image, list_archive_images, list_tar, lz4_content_size, lz4_stream_reader,
+};
 use thor_core::backend::{self, NusbTransport};
 use thor_core::flash::{plan_flash, FlashParams};
 use thor_core::odin::{FlashState, Odin};
@@ -483,17 +485,20 @@ fn do_flash_live(
     finish: Finish,
     assume_yes: bool,
 ) -> Result<(), Box<dyn Error>> {
-    if base.ends_with(".tar") || base.ends_with(".tar.md5") {
-        return Err(
-            "whole-archive live flashing isn't wired yet — flash images individually, \
-                    or use flash-plan to preview the archive"
-                .into(),
-        );
-    }
-
     let mut odin = open_session()?;
     let pit = PitData::parse(&odin.dump_pit()?)?;
     let params = odin.params().ok_or("session has no flash params")?;
+
+    if base.ends_with(".tar") || base.ends_with(".tar.md5") {
+        if partition.is_some() {
+            return Err(
+                "a partition name can't be given for a whole-archive flash — every \
+                        image is matched to its own partition"
+                    .into(),
+            );
+        }
+        return flash_archive_live(file, odin, &pit, &params, finish, assume_yes);
+    }
 
     let entry = match_partition(&pit, base, partition)
         .ok_or_else(|| available_partitions_err(&pit))?
@@ -541,6 +546,141 @@ fn do_flash_live(
     );
 
     finish_session(odin, finish)
+}
+
+/// **Destructive.** Flash every image in an Odin `.tar` / `.tar.md5` that matches a PIT
+/// partition, in one session. Two passes: first resolve every image's on-device size (so the
+/// total is announced up front), then stream each matched image to its partition.
+fn flash_archive_live(
+    file: &str,
+    mut odin: Odin<NusbTransport>,
+    pit: &PitData,
+    params: &FlashParams,
+    finish: Finish,
+    assume_yes: bool,
+) -> Result<(), Box<dyn Error>> {
+    // Pass 1: match each image to a partition and sum the real (on-device) sizes.
+    let images = list_archive_images(std::fs::File::open(file)?)?;
+    let mut targets: Vec<(String, PitEntry, i64)> = Vec::new();
+    let mut skipped: Vec<String> = Vec::new();
+    for img in &images {
+        match match_archive_image(pit, &img.name) {
+            Some(entry) => targets.push((img.name.clone(), entry.clone(), img.real_size as i64)),
+            None => skipped.push(img.name.clone()),
+        }
+    }
+    if targets.is_empty() {
+        return Err("no image in the archive matches a PIT partition — nothing to flash".into());
+    }
+    let total: i64 = targets.iter().map(|(_, _, sz)| *sz).sum();
+
+    println!(
+        "\nAbout to FLASH {} image(s) from {file} — this WRITES to the device:",
+        targets.len()
+    );
+    let mut any_critical = false;
+    for (name, entry, sz) in &targets {
+        print_partition_plan(
+            &format!("{} (id {})  <= {name}", entry.partition, entry.partition_id),
+            *sz,
+            params,
+        );
+        any_critical |= progress::is_critical_partition(&entry.partition);
+    }
+    for s in &skipped {
+        println!("  {s}  — no matching PIT partition (skipped)");
+    }
+    println!(
+        "\nTotal: {} across {} partition(s).",
+        progress::human_bytes(total),
+        targets.len()
+    );
+
+    if !confirm_flash_archive(any_critical, targets.len(), assume_yes)? {
+        println!("Aborted — nothing was written.");
+        return finish_session(odin, Finish::Leave);
+    }
+
+    odin.set_total_bytes(total)?;
+
+    // Pass 2: stream each matched image to its partition. The lookup pairs an entry name with
+    // its partition + on-device length resolved in pass 1.
+    let lookup: std::collections::HashMap<&str, (&PitEntry, i64)> = targets
+        .iter()
+        .map(|(name, entry, sz)| (name.as_str(), (entry, *sz)))
+        .collect();
+    let width = 30usize;
+    let mut done = 0usize;
+    for_each_image(
+        std::fs::File::open(file)?,
+        |name, reader| -> Result<(), Box<dyn Error>> {
+            if let Some((entry, length)) = lookup.get(name).copied() {
+                println!(
+                    "\n[{}/{}] {} <= {name}  ({})",
+                    done + 1,
+                    targets.len(),
+                    entry.partition,
+                    progress::human_bytes(length)
+                );
+                odin.flash_partition(Some(reader), entry, length, |p| {
+                    print!(
+                        "\r  {}  seq {}/{}",
+                        progress::progress_bar(p.sent_bytes, p.total_bytes, width),
+                        p.sequence_index + 1,
+                        p.total_sequences
+                    );
+                    let _ = std::io::stdout().flush();
+                })?;
+                println!(
+                    "\r  {}  done{:<24}",
+                    progress::progress_bar(length, length, width),
+                    ""
+                );
+                done += 1;
+            }
+            Ok(())
+        },
+    )?;
+
+    println!(
+        "\nFlashed {}/{} image(s), {} total.",
+        done,
+        targets.len(),
+        progress::human_bytes(total)
+    );
+    finish_session(odin, finish)
+}
+
+/// Confirm a whole-archive flash. Typing each partition name is impractical for many images,
+/// so this gate requires typing the literal word `FLASH`, warns when a critical partition is
+/// included, and refuses a non-interactive stdin unless `--yes` was given.
+fn confirm_flash_archive(
+    any_critical: bool,
+    count: usize,
+    assume_yes: bool,
+) -> Result<bool, Box<dyn Error>> {
+    if assume_yes {
+        println!("(--yes given: skipping confirmation)");
+        return Ok(true);
+    }
+    if !std::io::stdin().is_terminal() {
+        return Err(
+            "refusing to flash: stdin isn't a terminal and --yes wasn't given, so the \
+             confirmation can't be answered"
+                .into(),
+        );
+    }
+    if any_critical {
+        println!(
+            "\nWARNING: this archive includes a bootloader/critical partition — a bad flash \
+             here can HARD-BRICK the device."
+        );
+    }
+    print!("\nType FLASH (capitals) to flash all {count} partition(s), anything else aborts: ");
+    std::io::stdout().flush()?;
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line)?;
+    Ok(line.trim() == "FLASH")
 }
 
 /// Open `file` as a flash source, returning the reader and the number of bytes that will

@@ -5,13 +5,13 @@ Samsung's **Odin** firmware flasher, which talks to Galaxy devices in **download
 USB. This port keeps what makes Thor special (raw USB, no libusb) while adding cross-platform
 support, a testable engine, and a scriptable CLI.
 
-> **Status: read-only + dry-run validated on real hardware; single-image live flash built
-> and gated.** Every non-destructive operation is proven byte-for-byte against the reference
-> C# tool. Writing firmware — the one destructive operation, whose failure mode is a bricked
-> device — is now implemented for a single partition image (`thor flash --execute`), behind a
-> dry-run default and a typed confirmation, but has **not** yet been fired at real hardware
-> pending a safe target (a spare device or exact stock signed firmware). Whole-archive live
-> flashing is the next step.
+> **Status: read-only + dry-run validated on real hardware; live flash built and gated.**
+> Every non-destructive operation is proven byte-for-byte against the reference C# tool.
+> Writing firmware — the one destructive operation, whose failure mode is a bricked device —
+> is now implemented for both a single partition image and a whole Odin `.tar`/`.tar.md5`
+> (`thor flash --execute`), behind a dry-run default and a typed confirmation, but has **not**
+> yet been fired at real hardware pending a safe target (a spare device or exact stock signed
+> firmware).
 
 ## What it can do today
 
@@ -22,7 +22,7 @@ support, a testable engine, and a scriptable CLI.
 | `thor print-pit [file]` | Pretty-print a PIT — from a file, or dumped live |
 | `thor tar-list <archive>` | List the images in an Odin `.tar` / `.tar.md5` |
 | `thor flash-plan [--pit <pit>] <file> [partition]` | **Dry run** — show exactly what flashing would do (sequences, parts, sizes), writing nothing. Handles single images, whole archives, and `.lz4` |
-| `thor flash [--execute] [--yes] [--reboot\|…] <file> [partition]` | Flash one image to its partition. **Without `--execute`** it's a dry run (identical to `flash-plan`); **with `--execute`** it writes, after showing the plan and requiring you to type the partition name. `.lz4` is decompressed on the fly |
+| `thor flash [--execute] [--yes] [--reboot\|…] <file> [partition]` | Flash a single image **or a whole `.tar`/`.tar.md5`** to its partition(s). **Without `--execute`** it's a dry run (identical to `flash-plan`); **with `--execute`** it writes, after showing the plan and requiring a typed confirmation (the partition name for one image, `FLASH` for an archive). `.lz4` is decompressed on the fly |
 | `thor reboot [normal\|download]` · `thor end` | Reboot / shut down the device |
 | `thor shell` | **Interactive session** — connect once, run many commands |
 

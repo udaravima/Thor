@@ -58,8 +58,8 @@ feature candidates. Living document.
 
 ## Milestone sequence
 
-M1 read-only skeleton ✅ → **M2 flashing engine (engine + dry-run + single-image live flash
-done, all gated; whole-archive live flash pending)** →
+M1 read-only skeleton ✅ → **M2 flashing engine ✅ (engine + dry-run + single-image & whole-
+archive live flash, all gated; not yet fired at real hardware)** →
 M3 remaining Odin ops (session lifecycle ✅; erase/factory-reset/set-region/T-Flash pending) →
 M4 archives (tar/lz4) ✅ → M5 confirm Windows/macOS backends → M6 polish (REPL parity,
 packaging). See [rust-milestone-1.md](rust-milestone-1.md) for M1.
@@ -102,11 +102,20 @@ download-mode boot.)
   firmware, or a spare device). Odin has no partition-read, so "dump and flash back unchanged"
   is not available as a safety net.
 
-**Remaining in M2:**
-- Whole-archive live flash: iterate an Odin `.tar`/`.tar.md5`, `set_total_bytes` on the summed
-  real sizes, then stream each matched image (decompressing `.lz4` entries via the header-chain
-  trick, since a tar entry isn't seekable). Engine + streaming primitives already exist.
-- Session end/reboot (0x67 region) for clean teardown — ✅ done (see M3 line).
+**Whole-archive live flash (2026-09-06) — ✅ built and gated:**
+- `thor flash --execute <archive.tar[.md5]>` flashes every image matching a PIT partition in
+  one session. Two passes: `list_archive_images` resolves each image's on-device size (so the
+  summed total is announced via `set_total_bytes` up front), then the new streaming
+  `archive::for_each_image` hands each entry to `flash_partition` as a decompressed reader —
+  `.lz4` entries are decoded on the fly (wrapping the tar entry directly, so no header-chain
+  trick was needed after all), never buffering a whole image.
+- One confirmation for the archive (typing each partition name is impractical): type `FLASH`,
+  with the critical-partition warning and non-interactive-stdin refusal from the single-image
+  path. Unmatched images are listed and skipped. 58 tests total.
+
+**M2 is complete.** Nothing writes to real hardware yet — still awaiting a safe target.
+
+Session end/reboot (0x67 region) for clean teardown — ✅ done (see M3 line).
 
 ### M4 status (2026-09-05) — ✅ archive + LZ4 handling complete
 
