@@ -23,12 +23,15 @@ flashing, erase, or writes of any kind in this milestone.
 |--:|------|------|---------------|--------|
 | 1 | PIT parser (`PitData`/`PitEntry`) | pure | golden sample vs C# log | ✅ done (5 tests) |
 | 2 | PIT field mappers (+ fix off-by-one) | pure | golden labels vs C# log | ✅ done (3 tests) |
-| 3 | LE byte helpers (read/write int/long, align) | pure | round-trip unit tests | ⬜ next |
-| 4 | Odin command framing + error decode | pure | encode known packets; decode `0xFF`+codes | ⬜ |
-| 5 | Flash-sequence math (ported as pure fn) | pure | vectors for v0/1 (128 KiB) and v2+ (1 MiB) | ⬜ |
-| 6 | `UsbHandler` trait + nusb Linux backend | I/O | live device (supervised) | ⬜ |
+| 3 | LE byte helpers (`Packet` build, read i32) | pure | round-trip unit tests | ✅ done (8 tests) |
+| 4 | Odin failure decode (`0xFF` + error codes) | pure | decode `-2..-7` + unknown | ✅ done (5 tests) |
+| 5 | Flash-sequence math (`plan_flash`) | pure | vectors for v0/1 (128 KiB) and v2+ (1 MiB) | ✅ done (7 tests) |
+| 6 | `UsbHandler` trait + nusb Linux backend | I/O | live device (supervised) | ⬜ next — needs hardware |
 | 7 | Odin session: handshake, begin, dump_pit | I/O | live device (supervised) | ⬜ |
 | 8 | `thor-cli` minimal REPL (read-only cmds) | I/O | manual, vs C# on the same phone | ⬜ |
+
+**Engine status:** all pure logic complete — 28 tests green, clippy clean. Modules:
+`pit`, `proto` (packet builder), `odin` (failure decode), `flash` (sequence planner).
 
 **Acceptance test for M1:** on the user's machine, `dumpPit out.pit` from the Rust build
 produces a file that matches the C# Thor's dump of the same phone byte-for-byte, and
