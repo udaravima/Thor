@@ -162,9 +162,14 @@ actionable:
   generations — but a real v4 bootloader could in principle behave differently; worth a capture
   if we ever see a version-related `BeginSession` failure. No code change now.
 - **Rollback protection (anti-rollback fuses).** Flashing firmware older than the fused RP
-  (rollback-protection) level fails with `SW REV CHECK FAIL`. This is a common real failure our
-  decoder currently lumps into `Unknown`/`Auth`. TODO: capture the actual `0xFF` code for it and
-  add a `FlashFailKind` variant with a clear message ("firmware too old — anti-rollback").
+  (rollback-protection) level fails with `SW REV CHECK FAIL: Fused X > Binary Y`. Verified
+  (2026-09-06): this is a **bootloader-side string** shown in Odin's log, *not* a documented
+  distinct `0xFF` code — the C# `OdinFailCheck` decodes only `-2..-7`, and no public source maps
+  a rev-check code. So rather than invent one, `OdinFailure::hint()` now names anti-rollback (and
+  signature mismatch) as the likely causes on the codes it plausibly arrives as (`Auth`,
+  `Unknown`), and that hint is appended to the failure's `Display` so it reaches the user
+  automatically. Open item: if a capture ever shows a distinct code, promote it to a real
+  `FlashFailKind` variant.
 - **VaultKeeper.** On unlocked bootloaders, wiping `/data` triggers VaultKeeper to *re-lock* the
   bootloader until setup is completed online. Already surfaced as a warning on `factory-reset`.
 - **Any non-handshake request locks the device.** Confirmed: in download mode the device waits

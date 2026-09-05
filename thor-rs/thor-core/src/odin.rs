@@ -71,16 +71,52 @@ pub struct OdinFailure {
     pub kind: FlashFailKind,
 }
 
+impl OdinFailure {
+    /// Human-actionable guidance for this failure — the likely real-world causes and what to
+    /// check — or `None` when there's nothing useful to add beyond the raw code.
+    ///
+    /// Note on anti-rollback: Samsung reports a firmware downgrade as the bootloader-side
+    /// string `SW REV CHECK FAIL: Fused X > Binary Y` (shown in Odin's log), not as a
+    /// documented distinct `0xFF` code — so we surface it as a *likely cause* on the codes it
+    /// plausibly arrives as (`Auth`, `Unknown`) rather than pretending to decode an exact code
+    /// we haven't captured. See docs/port/roadmap.md (Community research).
+    pub fn hint(&self) -> Option<&'static str> {
+        match self.kind {
+            FlashFailKind::Auth => Some(
+                "the bootloader rejected the image — it must be officially signed for this exact \
+                 model, and no older than the device's fused anti-rollback revision (a downgrade \
+                 shows in Odin as \"SW REV CHECK FAIL: Fused X > Binary Y\").",
+            ),
+            FlashFailKind::WriteProtect => Some(
+                "the partition is write-protected — a locked bootloader or an eFUSE/Knox guard.",
+            ),
+            FlashFailKind::Size => Some(
+                "the image size doesn't match what the partition expects — check the right file \
+                 is going to the right partition.",
+            ),
+            FlashFailKind::Unknown => Some(
+                "common causes are a signature mismatch (wrong or unsigned firmware for this \
+                 model) or anti-rollback (firmware older than the device's fused revision).",
+            ),
+            FlashFailKind::Erase | FlashFailKind::Write | FlashFailKind::Ext4 => None,
+        }
+    }
+}
+
 impl std::fmt::Display for OdinFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.kind {
-            FlashFailKind::Unknown => write!(f, "device returned 0xFF (code 0x{:04X})", self.code),
+            FlashFailKind::Unknown => write!(f, "device returned 0xFF (code 0x{:04X})", self.code)?,
             kind => write!(
                 f,
                 "device returned 0xFF (code 0x{:04X}, {:?})",
                 self.code, kind
-            ),
+            )?,
         }
+        if let Some(hint) = self.hint() {
+            write!(f, "\n  hint: {hint}")?;
+        }
+        Ok(())
     }
 }
 
@@ -941,5 +977,52 @@ mod tests {
             kind: FlashFailKind::Auth,
         };
         assert!(err.to_string().contains("Auth"));
+    }
+
+    fn failure(kind: FlashFailKind) -> OdinFailure {
+        OdinFailure { code: -1, kind }
+    }
+
+    #[test]
+    fn auth_hint_names_signature_and_rollback() {
+        let h = failure(FlashFailKind::Auth).hint().unwrap().to_lowercase();
+        assert!(h.contains("sign"), "auth hint should mention signing: {h}");
+        assert!(
+            h.contains("rollback") || h.contains("sw rev"),
+            "auth hint should mention anti-rollback: {h}"
+        );
+    }
+
+    #[test]
+    fn unknown_hint_names_rollback() {
+        let h = failure(FlashFailKind::Unknown)
+            .hint()
+            .unwrap()
+            .to_lowercase();
+        assert!(h.contains("rollback") || h.contains("sign"));
+    }
+
+    #[test]
+    fn write_protect_hint_mentions_write_protection() {
+        let h = failure(FlashFailKind::WriteProtect)
+            .hint()
+            .unwrap()
+            .to_lowercase();
+        assert!(h.contains("write-prot") || h.contains("locked"));
+    }
+
+    #[test]
+    fn erase_failure_has_no_hint() {
+        assert!(failure(FlashFailKind::Erase).hint().is_none());
+    }
+
+    #[test]
+    fn display_appends_the_hint() {
+        let shown = failure(FlashFailKind::Auth).to_string();
+        assert!(
+            shown.contains("hint:"),
+            "display should carry the hint: {shown}"
+        );
+        assert!(shown.to_lowercase().contains("rollback"));
     }
 }
