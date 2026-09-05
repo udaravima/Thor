@@ -26,9 +26,17 @@ impl FlashParams {
     /// an unexpected version without changing behavior for real devices (0, 1, 2, 3…).
     pub fn for_bootloader_version(version: i16) -> Self {
         if version >= 2 {
-            FlashParams { packet_size: 1_048_576, packets_per_sequence: 30, flash_timeout_ms: 120_000 }
+            FlashParams {
+                packet_size: 1_048_576,
+                packets_per_sequence: 30,
+                flash_timeout_ms: 120_000,
+            }
         } else {
-            FlashParams { packet_size: 131_072, packets_per_sequence: 240, flash_timeout_ms: 30_000 }
+            FlashParams {
+                packet_size: 131_072,
+                packets_per_sequence: 240,
+                flash_timeout_ms: 30_000,
+            }
         }
     }
 
@@ -97,10 +105,18 @@ mod tests {
     use super::*;
 
     fn old_params() -> FlashParams {
-        FlashParams { packet_size: 131_072, packets_per_sequence: 240, flash_timeout_ms: 30_000 }
+        FlashParams {
+            packet_size: 131_072,
+            packets_per_sequence: 240,
+            flash_timeout_ms: 30_000,
+        }
     }
     fn new_params() -> FlashParams {
-        FlashParams { packet_size: 1_048_576, packets_per_sequence: 30, flash_timeout_ms: 120_000 }
+        FlashParams {
+            packet_size: 1_048_576,
+            packets_per_sequence: 30,
+            flash_timeout_ms: 120_000,
+        }
     }
 
     #[test]
@@ -122,9 +138,16 @@ mod tests {
     fn exact_single_sequence_new() {
         let plan = plan_flash(31_457_280, &new_params());
         assert_eq!(plan.len(), 1);
-        assert_eq!(plan[0], FlashSequence {
-            index: 0, real_size: 31_457_280, aligned_size: 31_457_280, parts: 30, is_last: true,
-        });
+        assert_eq!(
+            plan[0],
+            FlashSequence {
+                index: 0,
+                real_size: 31_457_280,
+                aligned_size: 31_457_280,
+                parts: 30,
+                is_last: true,
+            }
+        );
     }
 
     #[test]

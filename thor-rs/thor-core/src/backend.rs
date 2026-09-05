@@ -87,7 +87,12 @@ impl NusbTransport {
             .endpoint::<Bulk, Out>(out_addr)
             .map_err(|e| UsbError::Backend(format!("open OUT endpoint {out_addr:#04x}: {e}")))?;
 
-        Ok(NusbTransport { _device: device, _interface: interface, ep_in, ep_out })
+        Ok(NusbTransport {
+            _device: device,
+            _interface: interface,
+            ep_in,
+            ep_out,
+        })
     }
 }
 
@@ -132,8 +137,14 @@ impl Transport for NusbTransport {
         // size; the device ends the transfer early with a short packet, so we get back only
         // the bytes it actually sent (reported by `actual_len`).
         let mps = self.ep_in.max_packet_size().max(1);
-        let requested = if max_len == 0 { mps } else { max_len.div_ceil(mps) * mps };
-        let completion = self.ep_in.transfer_blocking(Buffer::new(requested), timeout);
+        let requested = if max_len == 0 {
+            mps
+        } else {
+            max_len.div_ceil(mps) * mps
+        };
+        let completion = self
+            .ep_in
+            .transfer_blocking(Buffer::new(requested), timeout);
         completion.status.map_err(map_transfer_err)?;
         Ok(completion.buffer[..completion.actual_len].to_vec())
     }

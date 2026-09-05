@@ -68,7 +68,9 @@ pub fn decompress_lz4(data: &[u8]) -> Result<Vec<u8>, ArchiveError> {
 /// reader so callers can stream from a `File` instead of buffering the whole archive.
 pub fn list_tar<R: Read>(reader: R) -> Result<Vec<TarEntryInfo>, ArchiveError> {
     let mut archive = tar::Archive::new(reader);
-    let entries = archive.entries().map_err(|e| ArchiveError::Tar(e.to_string()))?;
+    let entries = archive
+        .entries()
+        .map_err(|e| ArchiveError::Tar(e.to_string()))?;
     let mut out = Vec::new();
     for entry in entries {
         let entry = entry.map_err(|e| ArchiveError::Tar(e.to_string()))?;
@@ -87,7 +89,9 @@ pub fn list_tar<R: Read>(reader: R) -> Result<Vec<TarEntryInfo>, ArchiveError> {
 /// Extract one named top-level entry's bytes from a tar archive.
 pub fn extract_tar<R: Read>(reader: R, name: &str) -> Result<Vec<u8>, ArchiveError> {
     let mut archive = tar::Archive::new(reader);
-    let entries = archive.entries().map_err(|e| ArchiveError::Tar(e.to_string()))?;
+    let entries = archive
+        .entries()
+        .map_err(|e| ArchiveError::Tar(e.to_string()))?;
     for entry in entries {
         let mut entry = entry.map_err(|e| ArchiveError::Tar(e.to_string()))?;
         let matches = entry
@@ -97,7 +101,9 @@ pub fn extract_tar<R: Read>(reader: R, name: &str) -> Result<Vec<u8>, ArchiveErr
             == name;
         if matches {
             let mut buf = Vec::with_capacity(entry.size() as usize);
-            entry.read_to_end(&mut buf).map_err(|e| ArchiveError::Tar(e.to_string()))?;
+            entry
+                .read_to_end(&mut buf)
+                .map_err(|e| ArchiveError::Tar(e.to_string()))?;
             return Ok(buf);
         }
     }
@@ -122,7 +128,9 @@ pub struct ArchiveImage {
 /// so this stays cheap even for multi-GB firmware.
 pub fn list_archive_images<R: Read>(reader: R) -> Result<Vec<ArchiveImage>, ArchiveError> {
     let mut archive = tar::Archive::new(reader);
-    let entries = archive.entries().map_err(|e| ArchiveError::Tar(e.to_string()))?;
+    let entries = archive
+        .entries()
+        .map_err(|e| ArchiveError::Tar(e.to_string()))?;
     let mut out = Vec::new();
     for entry in entries {
         let mut entry = entry.map_err(|e| ArchiveError::Tar(e.to_string()))?;
@@ -141,7 +149,12 @@ pub fn list_archive_images<R: Read>(reader: R) -> Result<Vec<ArchiveImage>, Arch
         } else {
             stored_size
         };
-        out.push(ArchiveImage { name, stored_size, real_size, compressed });
+        out.push(ArchiveImage {
+            name,
+            stored_size,
+            real_size,
+            compressed,
+        });
     }
     Ok(out)
 }
@@ -208,27 +221,39 @@ mod tests {
         let tar = build_tar(&[("boot.img", b"BOOTDATA"), ("recovery.img", b"RECOVERY!!")]);
         let entries = list_tar(&tar[..]).unwrap();
         assert_eq!(entries.len(), 2);
-        assert!(entries.contains(&TarEntryInfo { name: "boot.img".into(), size: 8 }));
-        assert!(entries.contains(&TarEntryInfo { name: "recovery.img".into(), size: 10 }));
+        assert!(entries.contains(&TarEntryInfo {
+            name: "boot.img".into(),
+            size: 8
+        }));
+        assert!(entries.contains(&TarEntryInfo {
+            name: "recovery.img".into(),
+            size: 10
+        }));
     }
 
     #[test]
     fn extract_tar_returns_entry_bytes() {
         let tar = build_tar(&[("boot.img", b"BOOTDATA"), ("recovery.img", b"RECOVERY!!")]);
-        assert_eq!(extract_tar(&tar[..],"boot.img").unwrap(), b"BOOTDATA");
+        assert_eq!(extract_tar(&tar[..], "boot.img").unwrap(), b"BOOTDATA");
     }
 
     #[test]
     fn extract_tar_missing_is_not_found() {
         let tar = build_tar(&[("boot.img", b"BOOTDATA")]);
-        assert!(matches!(extract_tar(&tar[..], "nope.img"), Err(ArchiveError::NotFound(_))));
+        assert!(matches!(
+            extract_tar(&tar[..], "nope.img"),
+            Err(ArchiveError::NotFound(_))
+        ));
     }
 
     #[test]
     fn list_archive_images_resolves_lz4_real_sizes() {
         let payload = b"boot partition payload ".repeat(64); // 1472 bytes
         let compressed = lz4_compress_with_size(&payload);
-        let tar = build_tar(&[("boot.img.lz4", &compressed), ("dtbo.img", b"DTBO-RAW-DATA")]);
+        let tar = build_tar(&[
+            ("boot.img.lz4", &compressed),
+            ("dtbo.img", b"DTBO-RAW-DATA"),
+        ]);
 
         let images = list_archive_images(&tar[..]).unwrap();
         assert_eq!(images.len(), 2);

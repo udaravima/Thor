@@ -27,7 +27,9 @@ impl Default for Packet {
 impl Packet {
     /// A zero-filled packet.
     pub fn new() -> Self {
-        Packet { buf: [0u8; PACKET_LEN] }
+        Packet {
+            buf: [0u8; PACKET_LEN],
+        }
     }
 
     /// A packet with `region` at offset 0 and `sub_command` at offset 4 — the header every

@@ -143,7 +143,10 @@ fn shell_dump_pit(odin: &mut Odin<NusbTransport>, args: &[&str]) -> Result<(), B
 fn shell_flash_plan(odin: &mut Odin<NusbTransport>, args: &[&str]) -> Result<(), Box<dyn Error>> {
     let file = *args.first().ok_or("usage: flash-plan <file> [partition]")?;
     let partition = args.get(1).copied();
-    let base = std::path::Path::new(file).file_name().and_then(|s| s.to_str()).unwrap_or(file);
+    let base = std::path::Path::new(file)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(file);
     let pit = PitData::parse(&odin.dump_pit()?)?;
     let params = odin.params().ok_or("session has no flash params")?;
     do_flash_plan(file, base, partition, &pit, &params)
@@ -152,7 +155,11 @@ fn shell_flash_plan(odin: &mut Odin<NusbTransport>, args: &[&str]) -> Result<(),
 fn shell_tar_list(args: &[&str]) -> Result<(), Box<dyn Error>> {
     let path = *args.first().ok_or("usage: tar-list <archive>")?;
     for e in &list_tar(std::fs::File::open(path)?)? {
-        let note = if e.name.ends_with(".lz4") { "  (LZ4)" } else { "" };
+        let note = if e.name.ends_with(".lz4") {
+            "  (LZ4)"
+        } else {
+            ""
+        };
         println!("  {:>12} bytes  {}{note}", e.size, e.name);
     }
     Ok(())
@@ -167,7 +174,11 @@ fn cmd_tar_list(path: Option<&String>) -> Result<(), Box<dyn Error>> {
     }
     println!("{} file(s) in {path}:", entries.len());
     for e in &entries {
-        let note = if e.name.ends_with(".lz4") { "  (LZ4-compressed)" } else { "" };
+        let note = if e.name.ends_with(".lz4") {
+            "  (LZ4-compressed)"
+        } else {
+            ""
+        };
         println!("  {:>12} bytes  {}{note}", e.size, e.name);
     }
     Ok(())
@@ -179,7 +190,10 @@ fn open_session() -> Result<Odin<NusbTransport>, Box<dyn Error>> {
     let device = devices
         .first()
         .ok_or("no Samsung device found — is one connected in download mode?")?;
-    println!("Connecting to {} (id {})", device.display_name, device.identifier);
+    println!(
+        "Connecting to {} (id {})",
+        device.display_name, device.identifier
+    );
 
     let transport = NusbTransport::open(device)?;
     let mut odin = Odin::new(transport);
@@ -243,10 +257,10 @@ fn parse_finish(flag: Option<&str>) -> Result<Finish, Box<dyn Error>> {
         Some("--reboot-download") => Finish::RebootDownload,
         Some("--shutdown") => Finish::Shutdown,
         Some(o) => {
-            return Err(
-                format!("unknown option '{o}' (use --reboot | --reboot-download | --shutdown)")
-                    .into(),
+            return Err(format!(
+                "unknown option '{o}' (use --reboot | --reboot-download | --shutdown)"
             )
+            .into())
         }
     })
 }
@@ -319,7 +333,9 @@ fn cmd_flash_plan(args: &[String]) -> Result<(), Box<dyn Error>> {
         match args[i].as_str() {
             "--pit" => {
                 pit_file = Some(
-                    args.get(i + 1).map(String::as_str).ok_or("--pit needs a file path")?,
+                    args.get(i + 1)
+                        .map(String::as_str)
+                        .ok_or("--pit needs a file path")?,
                 );
                 i += 2;
             }
@@ -343,7 +359,10 @@ fn cmd_flash_plan(args: &[String]) -> Result<(), Box<dyn Error>> {
     // (assuming new-generation bootloader params, which we state).
     let (pit, params) = if let Some(pf) = pit_file {
         println!("Offline planning (no device): assuming new-generation bootloader params.\n");
-        (PitData::parse(&std::fs::read(pf)?)?, FlashParams::for_bootloader_version(3))
+        (
+            PitData::parse(&std::fs::read(pf)?)?,
+            FlashParams::for_bootloader_version(3),
+        )
     } else {
         let mut odin = open_session()?;
         let pit = PitData::parse(&odin.dump_pit()?)?;
@@ -398,7 +417,10 @@ fn do_flash_plan(
             .iter()
             .map(|e| format!("{} ({})", e.partition, e.file_name))
             .collect();
-        format!("no matching partition. Available:\n  {}", names.join("\n  "))
+        format!(
+            "no matching partition. Available:\n  {}",
+            names.join("\n  ")
+        )
     })?;
     let target = format!(
         "{} (id {}, binaryType {}, deviceType {})",
@@ -413,7 +435,10 @@ fn print_partition_plan(target: &str, len: i64, params: &FlashParams) {
     let plan = plan_flash(len, params);
     let on_wire: i64 = plan.iter().map(|s| s.aligned_size).sum();
     println!("{target}");
-    println!("    {len} B → {} sequence(s), {on_wire} B on the wire", plan.len());
+    println!(
+        "    {len} B → {} sequence(s), {on_wire} B on the wire",
+        plan.len()
+    );
     for s in &plan {
         println!(
             "    seq {:>3}: {:>4} part(s), real {:>10} B, on-wire {:>10} B{}",
@@ -446,17 +471,23 @@ fn plan_archive(file: &str, pit: &PitData, params: &FlashParams) -> Result<(), B
             None => println!("{}  — no matching PIT partition (skipped)", img.name),
         }
     }
-    println!("\n{matched}/{} image(s) matched to a partition.", images.len());
+    println!(
+        "\n{matched}/{} image(s) matched to a partition.",
+        images.len()
+    );
     Ok(())
 }
 
 /// Match a tar entry name to a PIT partition — direct, then with a trailing `.lz4` stripped.
 fn match_archive_image<'a>(pit: &'a PitData, entry_name: &str) -> Option<&'a PitEntry> {
-    pit.entries.iter().find(|e| e.file_name == entry_name).or_else(|| {
-        entry_name
-            .strip_suffix(".lz4")
-            .and_then(|n| pit.entries.iter().find(|e| e.file_name == n))
-    })
+    pit.entries
+        .iter()
+        .find(|e| e.file_name == entry_name)
+        .or_else(|| {
+            entry_name
+                .strip_suffix(".lz4")
+                .and_then(|n| pit.entries.iter().find(|e| e.file_name == n))
+        })
 }
 
 fn match_partition<'a>(
@@ -465,7 +496,10 @@ fn match_partition<'a>(
     explicit: Option<&str>,
 ) -> Option<&'a PitEntry> {
     match explicit {
-        Some(name) => pit.entries.iter().find(|e| e.partition.eq_ignore_ascii_case(name)),
+        Some(name) => pit
+            .entries
+            .iter()
+            .find(|e| e.partition.eq_ignore_ascii_case(name)),
         None => pit.entries.iter().find(|e| e.file_name == file_base),
     }
 }
@@ -479,7 +513,11 @@ fn print_pit(pit: &PitData) {
     println!("    Project name: {}", pit.project);
     println!(
         "    Version: {}",
-        if pit.is_new_version { "v2 (new)" } else { "v1 (old)" }
+        if pit.is_new_version {
+            "v2 (new)"
+        } else {
+            "v1 (old)"
+        }
     );
     println!("    Reserved: {}", pit.reserved);
     for (i, e) in pit.entries.iter().enumerate() {
@@ -487,10 +525,26 @@ fn print_pit(pit: &PitData) {
         let row = |label: &str, desc: &str, raw: i32| {
             println!("    {label}: {desc} ({raw})");
         };
-        row(m.update_attributes.label, m.update_attributes.describe(e.update_attributes), e.update_attributes);
-        row(m.attributes.label, m.attributes.describe(e.attributes), e.attributes);
-        row(m.binary_type.label, m.binary_type.describe(e.binary_type), e.binary_type);
-        row(m.device_type.label, m.device_type.describe(e.device_type), e.device_type);
+        row(
+            m.update_attributes.label,
+            m.update_attributes.describe(e.update_attributes),
+            e.update_attributes,
+        );
+        row(
+            m.attributes.label,
+            m.attributes.describe(e.attributes),
+            e.attributes,
+        );
+        row(
+            m.binary_type.label,
+            m.binary_type.describe(e.binary_type),
+            e.binary_type,
+        );
+        row(
+            m.device_type.label,
+            m.device_type.describe(e.device_type),
+            e.device_type,
+        );
         println!("    {}: {}", m.block_size_label, e.block_size);
         println!("    {}: {}", m.block_count_label, e.block_count);
         println!("    Partition Name: {}", e.partition);

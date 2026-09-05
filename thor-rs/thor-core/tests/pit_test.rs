@@ -8,8 +8,11 @@
 use thor_core::pit::PitData;
 
 fn sample() -> Vec<u8> {
-    std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/sample.pit"))
-        .expect("sample.pit fixture must exist")
+    std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/sample.pit"
+    ))
+    .expect("sample.pit fixture must exist")
 }
 
 #[test]

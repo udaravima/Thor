@@ -110,7 +110,13 @@ impl PitData {
             entries.push(entry);
         }
 
-        Ok(PitData { entries, is_new_version, unknown, project, reserved })
+        Ok(PitData {
+            entries,
+            is_new_version,
+            unknown,
+            project,
+            reserved,
+        })
     }
 }
 
@@ -152,13 +158,20 @@ pub struct FieldMapper {
 impl FieldMapper {
     /// Pick the mapper matching a PIT's generation (`is_new_version`).
     pub fn for_version(is_new: bool) -> &'static FieldMapper {
-        if is_new { &NEW_PIT_MAPPER } else { &OLD_PIT_MAPPER }
+        if is_new {
+            &NEW_PIT_MAPPER
+        } else {
+            &OLD_PIT_MAPPER
+        }
     }
 }
 
 /// Labels/descriptions for new-generation PITs.
 static NEW_PIT_MAPPER: FieldMapper = FieldMapper {
-    binary_type: Field { label: "Binary Type", values: &["Phone / AP", "Modem / CP"] },
+    binary_type: Field {
+        label: "Binary Type",
+        values: &["Phone / AP", "Modem / CP"],
+    },
     device_type: Field {
         label: "Device Type",
         values: &["OneNAND", "NAND", "EMMC", "SPI", "IDE", "NAND X16"],
@@ -166,8 +179,16 @@ static NEW_PIT_MAPPER: FieldMapper = FieldMapper {
     attributes: Field {
         label: "Partition Type",
         values: &[
-            "None", "BCT", "Bootloader", "Partition Table", "NV-Data", "Data", "MBR", "EBR",
-            "GP1", "GP1",
+            "None",
+            "BCT",
+            "Bootloader",
+            "Partition Table",
+            "NV-Data",
+            "Data",
+            "MBR",
+            "EBR",
+            "GP1",
+            "GP1",
         ],
     },
     update_attributes: Field {
@@ -180,8 +201,14 @@ static NEW_PIT_MAPPER: FieldMapper = FieldMapper {
 
 /// Labels/descriptions for old-generation PITs.
 static OLD_PIT_MAPPER: FieldMapper = FieldMapper {
-    binary_type: Field { label: "Binary Type", values: &["Phone / AP", "Modem / CP"] },
-    device_type: Field { label: "Device Type", values: &["OneNAND", "NAND", "MoviNAND"] },
+    binary_type: Field {
+        label: "Binary Type",
+        values: &["Phone / AP", "Modem / CP"],
+    },
+    device_type: Field {
+        label: "Device Type",
+        values: &["OneNAND", "NAND", "MoviNAND"],
+    },
     attributes: Field {
         label: "Attributes",
         values: &["Read-only", "Read-write", "STL"],

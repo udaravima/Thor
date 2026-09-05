@@ -71,7 +71,11 @@ impl std::fmt::Display for OdinFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.kind {
             FlashFailKind::Unknown => write!(f, "device returned 0xFF (code 0x{:04X})", self.code),
-            kind => write!(f, "device returned 0xFF (code 0x{:04X}, {:?})", self.code, kind),
+            kind => write!(
+                f,
+                "device returned 0xFF (code 0x{:04X}, {:?})",
+                self.code, kind
+            ),
         }
     }
 }
@@ -85,7 +89,10 @@ pub fn check_reply(buf: &[u8]) -> Result<(), OdinFailure> {
         return Ok(());
     }
     let code = read_i32_le(buf, 4).unwrap_or(0);
-    Err(OdinFailure { code, kind: FlashFailKind::from_code(code) })
+    Err(OdinFailure {
+        code,
+        kind: FlashFailKind::from_code(code),
+    })
 }
 
 /// The bootloader version reported by [`Odin::begin_session`]. `unknown1`/`unknown2` are
@@ -468,7 +475,10 @@ mod tests {
 
     impl MockTransport {
         fn with_reads(reads: Vec<Vec<u8>>) -> Self {
-            MockTransport { writes: Vec::new(), reads: reads.into() }
+            MockTransport {
+                writes: Vec::new(),
+                reads: reads.into(),
+            }
         }
     }
 
@@ -569,8 +579,7 @@ mod tests {
         let block0 = vec![0xAAu8; 500];
         let block1 = vec![0xBBu8; 200]; // partial final block
         let end_ack = vec![0u8; 8];
-        let mut mock =
-            MockTransport::with_reads(vec![size_reply, block0, block1, end_ack]);
+        let mut mock = MockTransport::with_reads(vec![size_reply, block0, block1, end_ack]);
 
         let pit = {
             let mut odin = Odin::new(&mut mock);
@@ -600,7 +609,11 @@ mod tests {
     }
     /// Tiny params so a flash produces a handful of small parts we can assert on.
     fn tiny_params() -> FlashParams {
-        FlashParams { packet_size: 4, packets_per_sequence: 2, flash_timeout_ms: 1000 }
+        FlashParams {
+            packet_size: 4,
+            packets_per_sequence: 2,
+            flash_timeout_ms: 1000,
+        }
     }
     fn le(v: i32) -> [u8; 4] {
         v.to_le_bytes()
@@ -632,7 +645,10 @@ mod tests {
         }
         assert_eq!(&mock.writes[0][0..4], &le(0x64)); // session region
         assert_eq!(&mock.writes[0][4..8], &le(0x02)); // SetTotalBytes
-        assert_eq!(&mock.writes[0][8..16], &0x0102_0304_0506_0708i64.to_le_bytes());
+        assert_eq!(
+            &mock.writes[0][8..16],
+            &0x0102_0304_0506_0708i64.to_le_bytes()
+        );
     }
 
     #[test]
@@ -640,15 +656,15 @@ mod tests {
         // 10 bytes with packet_size 4, 2 packets/seq (seq = 8 bytes):
         //   seq0: real 8, aligned 8, 2 parts;  seq1: real 2, aligned 4, 1 part (zero-padded)
         let reads = vec![
-            ack0(),          // request file flash
-            ack0(),          // seq0 request sequence
-            ack_index(0),    // seq0 part 0
-            ack_index(1),    // seq0 part 1
-            ack0(),          // seq0 end sequence
-            ack0(),          // seq1 request sequence
-            ack_index(0),    // seq1 part 0
-            ack0(),          // seq1 end sequence
-            ack0(),          // reset flash count
+            ack0(),       // request file flash
+            ack0(),       // seq0 request sequence
+            ack_index(0), // seq0 part 0
+            ack_index(1), // seq0 part 1
+            ack0(),       // seq0 end sequence
+            ack0(),       // seq1 request sequence
+            ack_index(0), // seq1 part 0
+            ack0(),       // seq1 end sequence
+            ack0(),       // reset flash count
         ];
         let mut mock = MockTransport::with_reads(reads);
         let entry = PitEntry {
@@ -662,7 +678,8 @@ mod tests {
             let mut odin = Odin::new(&mut mock);
             odin.params = Some(tiny_params());
             let mut cursor = Cursor::new(data);
-            odin.flash_partition(Some(&mut cursor), &entry, 10, |_| {}).unwrap();
+            odin.flash_partition(Some(&mut cursor), &entry, 10, |_| {})
+                .unwrap();
         }
         let w = &mock.writes;
         // request file flash
@@ -682,7 +699,7 @@ mod tests {
         assert_eq!(&w[4][20..24], &le(2)); // device type
         assert_eq!(&w[4][24..28], &le(5)); // partition id
         assert_eq!(&w[4][28..32], &le(0)); // not last
-        // seq1 request sequence, aligned size 4
+                                           // seq1 request sequence, aligned size 4
         assert_eq!(&w[5][8..12], &le(4));
         // seq1 part 0 — 2 real bytes, zero-padded to 4
         assert_eq!(w[6], vec![8, 9, 0, 0]);
@@ -699,12 +716,18 @@ mod tests {
         // length 4 → single sequence, single part
         let reads = vec![ack0(), ack0(), ack_index(0), ack0(), ack0()];
         let mut mock = MockTransport::with_reads(reads);
-        let entry = PitEntry { binary_type: 1, device_type: 2, partition_id: 9, ..Default::default() };
+        let entry = PitEntry {
+            binary_type: 1,
+            device_type: 2,
+            partition_id: 9,
+            ..Default::default()
+        };
         {
             let mut odin = Odin::new(&mut mock);
             odin.params = Some(tiny_params());
             let mut cursor = Cursor::new(vec![1u8, 2, 3, 4]);
-            odin.flash_partition(Some(&mut cursor), &entry, 4, |_| {}).unwrap();
+            odin.flash_partition(Some(&mut cursor), &entry, 4, |_| {})
+                .unwrap();
         }
         // end sequence is writes[3]
         let end = &mock.writes[3];
@@ -720,7 +743,12 @@ mod tests {
     fn flash_partition_erase_writes_zeros() {
         let reads = vec![ack0(), ack0(), ack_index(0), ack0(), ack0()];
         let mut mock = MockTransport::with_reads(reads);
-        let entry = PitEntry { binary_type: 0, device_type: 2, partition_id: 3, ..Default::default() };
+        let entry = PitEntry {
+            binary_type: 0,
+            device_type: 2,
+            partition_id: 3,
+            ..Default::default()
+        };
         {
             let mut odin = Odin::new(&mut mock);
             odin.params = Some(tiny_params());
@@ -734,7 +762,10 @@ mod tests {
         // part 0 ack claims index 5 → mismatch → abort
         let reads = vec![ack0(), ack0(), ack_index(5)];
         let mut mock = MockTransport::with_reads(reads);
-        let entry = PitEntry { binary_type: 0, ..Default::default() };
+        let entry = PitEntry {
+            binary_type: 0,
+            ..Default::default()
+        };
         let mut odin = Odin::new(&mut mock);
         odin.params = Some(tiny_params());
         let mut cursor = Cursor::new(vec![1u8, 2, 3, 4]);
@@ -786,7 +817,10 @@ mod tests {
 
     #[test]
     fn display_names_the_kind() {
-        let err = OdinFailure { code: -5, kind: FlashFailKind::Auth };
+        let err = OdinFailure {
+            code: -5,
+            kind: FlashFailKind::Auth,
+        };
         assert!(err.to_string().contains("Auth"));
     }
 }
