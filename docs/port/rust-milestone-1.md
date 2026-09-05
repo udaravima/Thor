@@ -1,4 +1,10 @@
-# Rust Port — Milestone 1: read-only walking skeleton
+# Rust Port — Milestone 1: read-only walking skeleton ✅ COMPLETE
+
+> **Acceptance passed (2026-09-05):** on a live device (bootloader v3), `thor dump-pit`
+> produced a PIT **byte-for-byte identical** to the reference `dev_files/sample-pit.pit`
+> (the C# Thor's dump of the same phone), and `thor print-pit` rendered **field-for-field
+> identical** output to the C# `printPit` log (682/682 lines, zero diff). The Rust port
+> reproduces the C# transport, Odin protocol, and PIT parsing exactly on real hardware.
 
 **Goal:** prove the two hard things — native USB transport and the Odin handshake — by
 doing only **non-destructive** operations (`connect → begin → dumpPit → printPit`). No

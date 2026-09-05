@@ -4,9 +4,11 @@
 //! A device reply signals failure with `0xFF` in byte 0; the signed i32 at bytes 4..8 is
 //! the error code. See `../../docs/odin-protocol.md`.
 
+use std::io::Read;
 use std::time::Duration;
 
-use crate::flash::FlashParams;
+use crate::flash::{plan_flash, FlashParams};
+use crate::pit::PitEntry;
 use crate::proto::{read_i32_le, Packet};
 use crate::transport::{Transport, UsbError};
 
@@ -141,12 +143,25 @@ pub struct Odin<T: Transport> {
     transport: T,
     version: Option<Version>,
     params: Option<FlashParams>,
+    /// Set the EFS-clear bit in phone-firmware end-of-sequence packets.
+    pub efs_clear: bool,
+    /// Set the bootloader-update bit in phone-firmware end-of-sequence packets.
+    pub bootloader_update: bool,
+    /// Reset the flash counter after a successful flash (default true, matching the C#).
+    pub reset_flash_count: bool,
 }
 
 impl<T: Transport> Odin<T> {
     /// Wrap a transport. No I/O happens until [`handshake`](Odin::handshake).
     pub fn new(transport: T) -> Self {
-        Odin { transport, version: None, params: None }
+        Odin {
+            transport,
+            version: None,
+            params: None,
+            efs_clear: false,
+            bootloader_update: false,
+            reset_flash_count: true,
+        }
     }
 
     /// The bootloader version, once [`begin_session`](Odin::begin_session) has run.
@@ -238,6 +253,164 @@ impl<T: Transport> Odin<T> {
 
         Ok(pit)
     }
+
+    /// Announce the total number of bytes about to be flashed (`SetTotalBytes`, 0x64/0x02).
+    /// Call once before flashing partitions.
+    pub fn set_total_bytes(&mut self, total: i64) -> Result<(), OdinError> {
+        let mut cmd = Packet::command(region::SESSION, 0x02);
+        cmd.write_i64(8, total);
+        self.transport.bulk_write(cmd.as_bytes(), DEFAULT_TIMEOUT)?;
+        ack(&mut self.transport, 8)?;
+        Ok(())
+    }
+
+    /// Flash one partition (region 0x66).
+    ///
+    /// `source` provides the image bytes; `None` writes zeros (used for erase). `length` is
+    /// the number of bytes to flash (the caller knows it — a `Read` has no length). `entry`
+    /// supplies the partition's ids/type for the end-of-sequence packet, and `progress` is
+    /// called as bytes are sent. **Destructive** against a real device.
+    pub fn flash_partition(
+        &mut self,
+        mut source: Option<&mut dyn Read>,
+        entry: &PitEntry,
+        length: i64,
+        mut progress: impl FnMut(FlashProgress),
+    ) -> Result<(), OdinError> {
+        let params = self
+            .params
+            .ok_or_else(|| OdinError::Protocol("no active session — call begin_session".into()))?;
+        let packet_size = params.packet_size;
+        let flash_timeout = Duration::from_millis(params.flash_timeout_ms);
+
+        // Request file flash (0x66/0x00).
+        let cmd = Packet::command(region::FLASH, 0x00);
+        self.transport.bulk_write(cmd.as_bytes(), DEFAULT_TIMEOUT)?;
+        ack(&mut self.transport, 8)?;
+
+        let plan = plan_flash(length, &params);
+        let total_sequences = plan.len();
+        let mut sent_bytes: i64 = 0;
+
+        for seq in &plan {
+            progress(FlashProgress {
+                sequence_index: seq.index,
+                total_sequences,
+                sent_bytes,
+                total_bytes: length,
+                state: FlashState::Sending,
+            });
+
+            // Request sequence flash (0x66/0x02) with the packet-aligned size.
+            let mut cmd = Packet::command(region::FLASH, 0x02);
+            cmd.write_i32(8, seq.aligned_size as i32);
+            self.transport.bulk_write(cmd.as_bytes(), DEFAULT_TIMEOUT)?;
+            ack(&mut self.transport, 8)?;
+
+            // Send the sequence as `parts` packets of `packet_size` bytes each. A short read
+            // (or `None` source, for erase) leaves the rest of the packet zero-padded.
+            for j in 0..seq.parts {
+                let mut part = vec![0u8; packet_size as usize];
+                if let Some(src) = source.as_mut() {
+                    read_fill(&mut **src, &mut part)?;
+                }
+                self.transport.bulk_write(&part, DEFAULT_TIMEOUT)?;
+                let reply = ack(&mut self.transport, 8)?;
+                let index = read_i32_le(&reply, 4).unwrap_or(-1) as i64;
+                if index != j {
+                    return Err(OdinError::Protocol(format!(
+                        "expected part index {j}, device acknowledged {index}"
+                    )));
+                }
+                sent_bytes += packet_size;
+                progress(FlashProgress {
+                    sequence_index: seq.index,
+                    total_sequences,
+                    sent_bytes,
+                    total_bytes: length,
+                    state: FlashState::Sending,
+                });
+            }
+
+            progress(FlashProgress {
+                sequence_index: seq.index,
+                total_sequences,
+                sent_bytes,
+                total_bytes: length,
+                state: FlashState::Flashing,
+            });
+
+            // End sequence flash (0x66/0x03). Modem firmware uses a shorter layout without a
+            // partition id or the EFS/bootloader flags.
+            let mut cmd = Packet::command(region::FLASH, 0x03);
+            if entry.binary_type == 1 {
+                cmd.write_i32(8, 0x01);
+                cmd.write_i32(12, seq.real_size as i32);
+                cmd.write_i32(16, entry.binary_type);
+                cmd.write_i32(20, entry.device_type);
+                cmd.write_i32(24, if seq.is_last { 1 } else { 0 });
+            } else {
+                cmd.write_i32(8, 0x00);
+                cmd.write_i32(12, seq.real_size as i32);
+                cmd.write_i32(16, entry.binary_type);
+                cmd.write_i32(20, entry.device_type);
+                cmd.write_i32(24, entry.partition_id);
+                cmd.write_i32(28, if seq.is_last { 1 } else { 0 });
+                cmd.write_i32(32, i32::from(self.efs_clear));
+                cmd.write_i32(36, i32::from(self.bootloader_update));
+            }
+            self.transport.bulk_write(cmd.as_bytes(), DEFAULT_TIMEOUT)?;
+            // The device commits the sequence here — allow the version-based flash timeout.
+            let reply = self.transport.bulk_read(8, flash_timeout)?;
+            if reply.len() != 8 {
+                return Err(OdinError::Protocol(format!(
+                    "expected 8-byte end-sequence reply, got {}",
+                    reply.len()
+                )));
+            }
+            check_reply(&reply)?;
+        }
+
+        // Reset the flash counter (0x64/0x01), unless disabled.
+        if self.reset_flash_count {
+            let cmd = Packet::command(region::SESSION, 0x01);
+            self.transport.bulk_write(cmd.as_bytes(), DEFAULT_TIMEOUT)?;
+            ack(&mut self.transport, 8)?;
+        }
+
+        Ok(())
+    }
+}
+
+/// Fill `buf` from `reader`, reading until it's full or EOF; bytes past EOF stay as they
+/// were (the caller pre-zeros for padding). Handles partial reads.
+fn read_fill(reader: &mut dyn Read, buf: &mut [u8]) -> Result<(), OdinError> {
+    let mut filled = 0;
+    while filled < buf.len() {
+        match reader.read(&mut buf[filled..]) {
+            Ok(0) => break,
+            Ok(n) => filled += n,
+            Err(e) => return Err(OdinError::Protocol(format!("reading flash source: {e}"))),
+        }
+    }
+    Ok(())
+}
+
+/// Whether a flash sequence is currently being sent to the device or committed by it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FlashState {
+    Sending,
+    Flashing,
+}
+
+/// Progress of a partition flash, reported to the `flash_partition` callback.
+#[derive(Debug, Clone, Copy)]
+pub struct FlashProgress {
+    pub sequence_index: usize,
+    pub total_sequences: usize,
+    pub sent_bytes: i64,
+    pub total_bytes: i64,
+    pub state: FlashState,
 }
 
 /// Read exactly `want` bytes into an ack, or fail with a protocol error.
@@ -384,6 +557,145 @@ mod tests {
         // writes: [request 0x65/0x01, block 0x65/0x02 idx0, block idx1, end 0x65/0x03]
         assert_eq!(&mock.writes[1][8..12], &0i32.to_le_bytes());
         assert_eq!(&mock.writes[2][8..12], &1i32.to_le_bytes());
+    }
+
+    use crate::flash::FlashParams;
+    use crate::pit::PitEntry;
+    use std::io::Cursor;
+
+    fn ack0() -> Vec<u8> {
+        vec![0u8; 8]
+    }
+    fn ack_index(i: i32) -> Vec<u8> {
+        let mut a = vec![0u8; 8];
+        a[4..8].copy_from_slice(&i.to_le_bytes());
+        a
+    }
+    /// Tiny params so a flash produces a handful of small parts we can assert on.
+    fn tiny_params() -> FlashParams {
+        FlashParams { packet_size: 4, packets_per_sequence: 2, flash_timeout_ms: 1000 }
+    }
+    fn le(v: i32) -> [u8; 4] {
+        v.to_le_bytes()
+    }
+
+    #[test]
+    fn set_total_bytes_sends_long_command() {
+        let mut mock = MockTransport::with_reads(vec![ack0()]);
+        {
+            let mut odin = Odin::new(&mut mock);
+            odin.set_total_bytes(0x0102_0304_0506_0708).unwrap();
+        }
+        assert_eq!(&mock.writes[0][0..4], &le(0x64)); // session region
+        assert_eq!(&mock.writes[0][4..8], &le(0x02)); // SetTotalBytes
+        assert_eq!(&mock.writes[0][8..16], &0x0102_0304_0506_0708i64.to_le_bytes());
+    }
+
+    #[test]
+    fn flash_partition_phone_sends_full_sequence() {
+        // 10 bytes with packet_size 4, 2 packets/seq (seq = 8 bytes):
+        //   seq0: real 8, aligned 8, 2 parts;  seq1: real 2, aligned 4, 1 part (zero-padded)
+        let reads = vec![
+            ack0(),          // request file flash
+            ack0(),          // seq0 request sequence
+            ack_index(0),    // seq0 part 0
+            ack_index(1),    // seq0 part 1
+            ack0(),          // seq0 end sequence
+            ack0(),          // seq1 request sequence
+            ack_index(0),    // seq1 part 0
+            ack0(),          // seq1 end sequence
+            ack0(),          // reset flash count
+        ];
+        let mut mock = MockTransport::with_reads(reads);
+        let entry = PitEntry {
+            binary_type: 0,
+            device_type: 2,
+            partition_id: 5,
+            ..Default::default()
+        };
+        let data: Vec<u8> = (0..10).collect();
+        {
+            let mut odin = Odin::new(&mut mock);
+            odin.params = Some(tiny_params());
+            let mut cursor = Cursor::new(data);
+            odin.flash_partition(Some(&mut cursor), &entry, 10, |_| {}).unwrap();
+        }
+        let w = &mock.writes;
+        // request file flash
+        assert_eq!(&w[0][0..4], &le(0x66));
+        assert_eq!(&w[0][4..8], &le(0x00));
+        // seq0 request sequence, aligned size 8
+        assert_eq!(&w[1][4..8], &le(0x02));
+        assert_eq!(&w[1][8..12], &le(8));
+        // part data (raw packet_size buffers)
+        assert_eq!(w[2], vec![0, 1, 2, 3]);
+        assert_eq!(w[3], vec![4, 5, 6, 7]);
+        // seq0 end sequence — phone layout
+        assert_eq!(&w[4][4..8], &le(0x03));
+        assert_eq!(&w[4][8..12], &le(0x00)); // 0 = phone
+        assert_eq!(&w[4][12..16], &le(8)); // real size
+        assert_eq!(&w[4][16..20], &le(0)); // binary type
+        assert_eq!(&w[4][20..24], &le(2)); // device type
+        assert_eq!(&w[4][24..28], &le(5)); // partition id
+        assert_eq!(&w[4][28..32], &le(0)); // not last
+        // seq1 request sequence, aligned size 4
+        assert_eq!(&w[5][8..12], &le(4));
+        // seq1 part 0 — 2 real bytes, zero-padded to 4
+        assert_eq!(w[6], vec![8, 9, 0, 0]);
+        // seq1 end sequence — real size 2, last = 1
+        assert_eq!(&w[7][12..16], &le(2));
+        assert_eq!(&w[7][28..32], &le(1));
+        // reset flash count
+        assert_eq!(&w[8][0..4], &le(0x64));
+        assert_eq!(&w[8][4..8], &le(0x01));
+    }
+
+    #[test]
+    fn flash_partition_modem_uses_modem_layout() {
+        // length 4 → single sequence, single part
+        let reads = vec![ack0(), ack0(), ack_index(0), ack0(), ack0()];
+        let mut mock = MockTransport::with_reads(reads);
+        let entry = PitEntry { binary_type: 1, device_type: 2, partition_id: 9, ..Default::default() };
+        {
+            let mut odin = Odin::new(&mut mock);
+            odin.params = Some(tiny_params());
+            let mut cursor = Cursor::new(vec![1u8, 2, 3, 4]);
+            odin.flash_partition(Some(&mut cursor), &entry, 4, |_| {}).unwrap();
+        }
+        // end sequence is writes[3]
+        let end = &mock.writes[3];
+        assert_eq!(&end[4..8], &le(0x03));
+        assert_eq!(&end[8..12], &le(0x01)); // 1 = modem
+        assert_eq!(&end[12..16], &le(4)); // real size
+        assert_eq!(&end[16..20], &le(1)); // binary type
+        assert_eq!(&end[20..24], &le(2)); // device type
+        assert_eq!(&end[24..28], &le(1)); // last (modem: no partition id, last is at offset 24)
+    }
+
+    #[test]
+    fn flash_partition_erase_writes_zeros() {
+        let reads = vec![ack0(), ack0(), ack_index(0), ack0(), ack0()];
+        let mut mock = MockTransport::with_reads(reads);
+        let entry = PitEntry { binary_type: 0, device_type: 2, partition_id: 3, ..Default::default() };
+        {
+            let mut odin = Odin::new(&mut mock);
+            odin.params = Some(tiny_params());
+            odin.flash_partition(None, &entry, 4, |_| {}).unwrap(); // None source = erase
+        }
+        assert_eq!(mock.writes[2], vec![0, 0, 0, 0]); // the part is all zeros
+    }
+
+    #[test]
+    fn flash_partition_aborts_on_wrong_part_index() {
+        // part 0 ack claims index 5 → mismatch → abort
+        let reads = vec![ack0(), ack0(), ack_index(5)];
+        let mut mock = MockTransport::with_reads(reads);
+        let entry = PitEntry { binary_type: 0, ..Default::default() };
+        let mut odin = Odin::new(&mut mock);
+        odin.params = Some(tiny_params());
+        let mut cursor = Cursor::new(vec![1u8, 2, 3, 4]);
+        let r = odin.flash_partition(Some(&mut cursor), &entry, 4, |_| {});
+        assert!(matches!(r, Err(OdinError::Protocol(_))));
     }
 
     #[test]

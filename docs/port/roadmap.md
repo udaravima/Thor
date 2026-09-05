@@ -58,6 +58,23 @@ feature candidates. Living document.
 
 ## Milestone sequence
 
-M1 read-only skeleton → M2 flashing engine → M3 remaining Odin ops → M4 archives (tar/lz4)
-→ M5 confirm Windows/macOS backends → M6 polish (REPL parity, packaging). See
-[rust-milestone-1.md](rust-milestone-1.md) for the current task board.
+M1 read-only skeleton ✅ → **M2 flashing engine (in progress)** → M3 remaining Odin ops →
+M4 archives (tar/lz4) → M5 confirm Windows/macOS backends → M6 polish (REPL parity,
+packaging). See [rust-milestone-1.md](rust-milestone-1.md) for M1.
+
+### M2 status (2026-09-05)
+
+**Done (test-first, no live destructive flash yet):**
+- `Odin::set_total_bytes` (0x64/0x02) and `Odin::flash_partition` (region 0x66) — the full
+  sequence/part engine driven by the tested `plan_flash`. Handles phone vs modem end-of-
+  sequence layouts, erase (None source → zeros), per-part index verification, EFS/bootloader/
+  reset-flash-count flags. 5 new mock-tested cases (40 tests total, clippy clean).
+- `thor flash-plan [--pit <file>] <file> [partition]` — a **dry run** that shows exactly what
+  a flash would do (sequences, parts, real vs on-wire bytes) and writes nothing. Works live
+  or fully offline against a saved PIT. Verified: a 70 MiB image → 3 sequences (30+30+10 MiB)
+  with new-gen 1 MiB packets.
+
+**Remaining before a live flash:**
+- `flashFile` (the actual live write) + interactive confirmations — gated until we agree a
+  **safe target** (flash a partition's own dumped bytes back, or use a spare device).
+- Session end/reboot (0x67 region) for clean teardown — small, likely folded into M3.

@@ -11,8 +11,9 @@ use std::error::Error;
 use std::process::ExitCode;
 
 use thor_core::backend::{self, NusbTransport};
+use thor_core::flash::{plan_flash, FlashParams};
 use thor_core::odin::Odin;
-use thor_core::pit::{FieldMapper, PitData};
+use thor_core::pit::{FieldMapper, PitData, PitEntry};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
@@ -20,6 +21,7 @@ fn main() -> ExitCode {
         Some("list") => cmd_list(),
         Some("dump-pit") => cmd_dump_pit(args.get(2)),
         Some("print-pit") => cmd_print_pit(args.get(2)),
+        Some("flash-plan") => cmd_flash_plan(&args[2..]),
         _ => {
             print_usage();
             return ExitCode::from(2);
@@ -40,7 +42,9 @@ fn print_usage() {
          USAGE:\n\
          \x20 thor list                 List connected Samsung devices\n\
          \x20 thor dump-pit <out.pit>   Dump the device's partition table to a file\n\
-         \x20 thor print-pit [file]     Print a PIT (from a file, or dumped live)\n"
+         \x20 thor print-pit [file]     Print a PIT (from a file, or dumped live)\n\
+         \x20 thor flash-plan <file> [partition]\n\
+         \x20                           Dry run: show what flashing <file> would do (no writes)\n"
     );
 }
 
@@ -109,6 +113,105 @@ fn cmd_print_pit(path: Option<&String>) -> Result<(), Box<dyn Error>> {
     };
     print_pit(&pit);
     Ok(())
+}
+
+/// Dry run: connect, read the PIT, and show exactly what flashing `file` onto its partition
+/// would do — sequences, parts, sizes — **without writing anything**.
+fn cmd_flash_plan(args: &[String]) -> Result<(), Box<dyn Error>> {
+    // Optional `--pit <file>` plans offline (no device); otherwise plan live.
+    let mut pit_file: Option<&str> = None;
+    let mut positional: Vec<&str> = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--pit" => {
+                pit_file = Some(
+                    args.get(i + 1).map(String::as_str).ok_or("--pit needs a file path")?,
+                );
+                i += 2;
+            }
+            other => {
+                positional.push(other);
+                i += 1;
+            }
+        }
+    }
+    let file = *positional
+        .first()
+        .ok_or("usage: thor flash-plan [--pit <pit>] <file> [partition]")?;
+    let partition = positional.get(1).copied();
+
+    let len = std::fs::metadata(file)?.len() as i64;
+    let base = std::path::Path::new(file)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(file);
+    if base.ends_with(".lz4") {
+        println!(
+            "note: {base} is LZ4-compressed — the on-device size differs from the file size \
+             (decompression isn't wired yet); planning against the raw file size.\n"
+        );
+    }
+
+    // Get the PIT and the flash params — live from the device, or offline from a PIT file
+    // (assuming new-generation bootloader params, which we state).
+    let (pit, params) = if let Some(pf) = pit_file {
+        println!("Offline planning (no device): assuming new-generation bootloader params.\n");
+        (PitData::parse(&std::fs::read(pf)?)?, FlashParams::for_bootloader_version(3))
+    } else {
+        let mut odin = open_session()?;
+        let pit = PitData::parse(&odin.dump_pit()?)?;
+        println!("(device left in download mode — reboot it to exit)\n");
+        let params = odin.params().ok_or("session has no flash params")?;
+        (pit, params)
+    };
+
+    let entry = match_partition(&pit, base, partition).ok_or_else(|| {
+        let names: Vec<String> = pit
+            .entries
+            .iter()
+            .map(|e| format!("{} ({})", e.partition, e.file_name))
+            .collect();
+        format!("no matching partition. Available:\n  {}", names.join("\n  "))
+    })?;
+
+    let plan = plan_flash(len, &params);
+    let on_wire: i64 = plan.iter().map(|s| s.aligned_size).sum();
+
+    println!("DRY RUN — no data will be written to the device.\n");
+    println!("File:    {file} ({len} bytes)");
+    println!(
+        "Target:  {} (id {}, binaryType {}, deviceType {})",
+        entry.partition, entry.partition_id, entry.binary_type, entry.device_type
+    );
+    println!(
+        "Packet:  {} bytes/part; one sequence = {} bytes",
+        params.packet_size,
+        params.sequence_size()
+    );
+    println!("Plan:    {} sequence(s), {on_wire} bytes on the wire", plan.len());
+    for s in &plan {
+        println!(
+            "  seq {:>3}: {:>4} part(s), real {:>10} B, on-wire {:>10} B{}",
+            s.index,
+            s.parts,
+            s.real_size,
+            s.aligned_size,
+            if s.is_last { "  (last)" } else { "" }
+        );
+    }
+    Ok(())
+}
+
+fn match_partition<'a>(
+    pit: &'a PitData,
+    file_base: &str,
+    explicit: Option<&str>,
+) -> Option<&'a PitEntry> {
+    match explicit {
+        Some(name) => pit.entries.iter().find(|e| e.partition.eq_ignore_ascii_case(name)),
+        None => pit.entries.iter().find(|e| e.file_name == file_base),
+    }
 }
 
 /// Render a PIT as an indented tree, matching the field order of the reference C# output.
