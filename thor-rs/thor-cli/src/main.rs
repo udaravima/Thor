@@ -8,7 +8,7 @@
 //! Everything here is non-destructive. Flashing lands in later milestones.
 
 use std::error::Error;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::process::ExitCode;
 
 use thor_core::archive::{list_archive_images, list_tar, lz4_content_size};
@@ -27,6 +27,7 @@ fn main() -> ExitCode {
         Some("flash-plan") => cmd_flash_plan(&args[2..]),
         Some("reboot") => cmd_reboot(args.get(2)),
         Some("end") => cmd_end(),
+        Some("shell") => cmd_shell(),
         _ => {
             print_usage();
             return ExitCode::from(2);
@@ -53,8 +54,108 @@ fn print_usage() {
          \x20 thor flash-plan [--pit <pit>] <file> [partition]\n\
          \x20                           Dry run: show what flashing <file> would do (no writes)\n\
          \x20 thor reboot [normal|download]   Reboot the device (default normal)\n\
-         \x20 thor end                  Shut the device down / end the session\n"
+         \x20 thor end                  Shut the device down / end the session\n\
+         \x20 thor shell                Interactive session: connect once, run many commands\n"
     );
+}
+
+/// Interactive REPL over a single persistent Odin session. Because a download-mode
+/// connection can't be reused across invocations, this is the ergonomic way to run several
+/// operations: connect once, then dump / plan / reboot without reconnecting.
+fn cmd_shell() -> Result<(), Box<dyn Error>> {
+    let mut odin = open_session()?;
+    println!("\nInteractive Odin session — type 'help' for commands.");
+    let stdin = std::io::stdin();
+    loop {
+        print!("thor> ");
+        std::io::stdout().flush()?;
+        let mut line = String::new();
+        if stdin.read_line(&mut line)? == 0 {
+            println!();
+            break; // EOF (Ctrl-D)
+        }
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        let (cmd, cmd_args) = match parts.split_first() {
+            Some(x) => x,
+            None => continue,
+        };
+        match *cmd {
+            "help" | "?" => print_shell_help(),
+            "pit" | "print-pit" => report(shell_print_pit(&mut odin)),
+            "dump-pit" => report(shell_dump_pit(&mut odin, cmd_args)),
+            "flash-plan" => report(shell_flash_plan(&mut odin, cmd_args)),
+            "tar-list" => report(shell_tar_list(cmd_args)),
+            "reboot" => {
+                let finish = match cmd_args.first().copied() {
+                    None | Some("normal") => Finish::RebootNormal,
+                    Some("download") => Finish::RebootDownload,
+                    Some(o) => {
+                        eprintln!("unknown reboot mode '{o}' (use normal | download)");
+                        continue;
+                    }
+                };
+                return finish_session(odin, finish);
+            }
+            "end" | "shutdown" => return finish_session(odin, Finish::Shutdown),
+            "quit" | "exit" => {
+                println!("Leaving — device stays in download mode (run 'thor reboot' to exit).");
+                return Ok(());
+            }
+            other => eprintln!("unknown command '{other}' (try 'help')"),
+        }
+    }
+    Ok(())
+}
+
+/// Print an error from a shell subcommand without tearing down the session.
+fn report(result: Result<(), Box<dyn Error>>) {
+    if let Err(e) = result {
+        eprintln!("error: {e}");
+    }
+}
+
+fn print_shell_help() {
+    println!(
+        "  pit | print-pit                dump & print the partition table\n\
+         \x20 dump-pit <file>                dump the PIT to a file\n\
+         \x20 flash-plan <file> [partition]  dry-run a flash (no writes)\n\
+         \x20 tar-list <archive>             list an Odin .tar/.tar.md5\n\
+         \x20 reboot [normal|download]       reboot the device and exit\n\
+         \x20 end                            shut the device down and exit\n\
+         \x20 quit | exit                    leave (device stays in download mode)"
+    );
+}
+
+fn shell_print_pit(odin: &mut Odin<NusbTransport>) -> Result<(), Box<dyn Error>> {
+    let pit = PitData::parse(&odin.dump_pit()?)?;
+    print_pit(&pit);
+    Ok(())
+}
+
+fn shell_dump_pit(odin: &mut Odin<NusbTransport>, args: &[&str]) -> Result<(), Box<dyn Error>> {
+    let path = *args.first().ok_or("usage: dump-pit <file>")?;
+    let pit = odin.dump_pit()?;
+    std::fs::write(path, &pit)?;
+    println!("Dumped {} bytes to {path}", pit.len());
+    Ok(())
+}
+
+fn shell_flash_plan(odin: &mut Odin<NusbTransport>, args: &[&str]) -> Result<(), Box<dyn Error>> {
+    let file = *args.first().ok_or("usage: flash-plan <file> [partition]")?;
+    let partition = args.get(1).copied();
+    let base = std::path::Path::new(file).file_name().and_then(|s| s.to_str()).unwrap_or(file);
+    let pit = PitData::parse(&odin.dump_pit()?)?;
+    let params = odin.params().ok_or("session has no flash params")?;
+    do_flash_plan(file, base, partition, &pit, &params)
+}
+
+fn shell_tar_list(args: &[&str]) -> Result<(), Box<dyn Error>> {
+    let path = *args.first().ok_or("usage: tar-list <archive>")?;
+    for e in &list_tar(std::fs::File::open(path)?)? {
+        let note = if e.name.ends_with(".lz4") { "  (LZ4)" } else { "" };
+        println!("  {:>12} bytes  {}{note}", e.size, e.name);
+    }
+    Ok(())
 }
 
 fn cmd_tar_list(path: Option<&String>) -> Result<(), Box<dyn Error>> {
@@ -251,6 +352,18 @@ fn cmd_flash_plan(args: &[String]) -> Result<(), Box<dyn Error>> {
         (pit, params)
     };
 
+    do_flash_plan(file, base, partition, &pit, &params)
+}
+
+/// Print the dry-run plan for `file` against a PIT — a single image or a whole archive.
+/// Shared by the one-shot CLI and the interactive shell.
+fn do_flash_plan(
+    file: &str,
+    base: &str,
+    partition: Option<&str>,
+    pit: &PitData,
+    params: &FlashParams,
+) -> Result<(), Box<dyn Error>> {
     println!("DRY RUN — no data will be written to the device.");
     println!(
         "Packet:  {} bytes/part; one sequence = {} bytes\n",
@@ -260,7 +373,7 @@ fn cmd_flash_plan(args: &[String]) -> Result<(), Box<dyn Error>> {
 
     // Whole-archive planning for Odin .tar / .tar.md5 packages.
     if base.ends_with(".tar") || base.ends_with(".tar.md5") {
-        return plan_archive(file, &pit, &params);
+        return plan_archive(file, pit, params);
     }
 
     // Single image (optionally .lz4).
@@ -279,7 +392,7 @@ fn cmd_flash_plan(args: &[String]) -> Result<(), Box<dyn Error>> {
             ),
         }
     }
-    let entry = match_partition(&pit, base, partition).ok_or_else(|| {
+    let entry = match_partition(pit, base, partition).ok_or_else(|| {
         let names: Vec<String> = pit
             .entries
             .iter()
@@ -291,7 +404,7 @@ fn cmd_flash_plan(args: &[String]) -> Result<(), Box<dyn Error>> {
         "{} (id {}, binaryType {}, deviceType {})",
         entry.partition, entry.partition_id, entry.binary_type, entry.device_type
     );
-    print_partition_plan(&target, len, &params);
+    print_partition_plan(&target, len, params);
     Ok(())
 }
 

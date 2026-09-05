@@ -68,6 +68,13 @@ shutdown`; CLI `thor reboot [normal|download]`, `thor end`, and a `--reboot`/`--
 `--shutdown` finish flag on `dump-pit` (dump-then-reboot in one session, since a download-mode
 connection can't be reused across invocations). 48 tests, clippy clean.
 
+**M6 polish — interactive REPL + package done (2026-09-05):** `thor shell` runs a single
+persistent session (connect once; `pit` / `dump-pit` / `flash-plan` / `tar-list` / `reboot` /
+`end` / `quit`), which is the real fix for the connection-reuse limitation. Release binary
+builds at ~788 KB. The C#'s copy-paste help-string bugs (F4) never existed in the Rust CLI, so
+that fix is moot here. Still non-destructive. (REPL loop not yet exercised live — needs a fresh
+download-mode boot.)
+
 ### M2 status (2026-09-05)
 
 **Done (test-first, no live destructive flash yet):**
