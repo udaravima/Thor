@@ -5,13 +5,12 @@ Samsung's **Odin** firmware flasher, which talks to Galaxy devices in **download
 USB. This port keeps what makes Thor special (raw USB, no libusb) while adding cross-platform
 support, a testable engine, and a scriptable CLI.
 
-> **Status: read-only + dry-run validated on real hardware; live flash built and gated.**
-> Every non-destructive operation is proven byte-for-byte against the reference C# tool.
-> Writing firmware — the one destructive operation, whose failure mode is a bricked device —
-> is now implemented for both a single partition image and a whole Odin `.tar`/`.tar.md5`
-> (`thor flash --execute`), behind a dry-run default and a typed confirmation, but has **not**
-> yet been fired at real hardware pending a safe target (a spare device or exact stock signed
-> firmware).
+> **Status: read-only + dry-run validated on real hardware; all write operations built and
+> gated.** Every non-destructive operation is proven byte-for-byte against the reference C#
+> tool. The destructive operations — flashing a single image or a whole Odin `.tar`/`.tar.md5`,
+> factory reset, partition erase, T-Flash, region set — are all implemented behind a dry-run
+> default and a typed confirmation, but have **not** yet been fired at real hardware pending a
+> safe target (a spare device or exact stock signed firmware).
 
 ## What it can do today
 
@@ -22,7 +21,10 @@ support, a testable engine, and a scriptable CLI.
 | `thor print-pit [file]` | Pretty-print a PIT — from a file, or dumped live |
 | `thor tar-list <archive>` | List the images in an Odin `.tar` / `.tar.md5` |
 | `thor flash-plan [--pit <pit>] <file> [partition]` | **Dry run** — show exactly what flashing would do (sequences, parts, sizes), writing nothing. Handles single images, whole archives, and `.lz4` |
-| `thor flash [--execute] [--yes] [--reboot\|…] <file> [partition]` | Flash a single image **or a whole `.tar`/`.tar.md5`** to its partition(s). **Without `--execute`** it's a dry run (identical to `flash-plan`); **with `--execute`** it writes, after showing the plan and requiring a typed confirmation (the partition name for one image, `FLASH` for an archive). `.lz4` is decompressed on the fly |
+| `thor flash [--execute] [--yes] [--tflash] [--reboot\|…] <file> [partition]` | Flash a single image **or a whole `.tar`/`.tar.md5`** to its partition(s). **Without `--execute`** it's a dry run (identical to `flash-plan`); **with `--execute`** it writes, after showing the plan and requiring a typed confirmation (the partition name for one image, `FLASH` for an archive). `.lz4` is decompressed on the fly; `--tflash` targets an inserted microSD |
+| `thor factory-reset --execute [--yes]` | Wipe `/data` (factory reset). Type `ERASE` to confirm |
+| `thor erase <partition> --size <bytes> --execute [--yes]` | Zero-fill a partition. Type the partition name to confirm |
+| `thor set-region <XAA> --execute [--yes]` | Set the CSC region code — **unverified** (shares an opcode with T-Flash in the original; may enable T-Flash instead). Type `YES` to confirm |
 | `thor reboot [normal\|download]` · `thor end` | Reboot / shut down the device |
 | `thor shell` | **Interactive session** — connect once, run many commands |
 
@@ -87,13 +89,20 @@ against, and [`../docs/port/`](../docs/port/) for the [dev guide](../docs/port/d
 
 ## Safety notes
 
-- **Writing is off by default and hard to trigger by accident.** `thor flash` is a dry run
-  unless you pass `--execute`; even then it prints the plan and makes you *type the partition
-  name* to proceed (`--yes` skips that only for automation), refuses a non-interactive stdin,
-  and warns loudly on the bootloader/critical partitions that hard-brick. Nothing writes on
-  the read-only commands.
+- **Every destructive command is off by default and hard to trigger by accident.** `flash`,
+  `factory-reset`, `erase`, and `set-region` all do nothing without `--execute`; even then they
+  print what will happen and make you *type a confirmation word* (the partition name, `FLASH`,
+  `ERASE`, or `YES`), refuse a non-interactive stdin unless `--yes`, and warn loudly on the
+  bootloader/critical partitions that hard-brick. The read-only commands never write.
 - **Signatures are enforced by the bootloader.** You can only flash officially-signed images
   for the exact model; a mismatch is rejected (`Auth`), not written as garbage.
+- **Anti-rollback is enforced too.** Flashing firmware older than the level fused into the
+  device fails with `SW REV CHECK FAIL` — you cannot downgrade past the rollback counter.
+- **A factory reset can re-lock the bootloader.** On an unlocked device, wiping `/data` trips
+  Samsung's *VaultKeeper*, which re-locks the bootloader until you complete setup online.
+- **`set-region` is unverified.** In the reference tool it shares a command opcode with T-Flash
+  enable (almost certainly a bug), so it may enable T-Flash rather than change the region. It's
+  shipped with that warning, not as a trusted operation.
 - **No partition read exists** in the Odin protocol, so "dump a partition and flash it back"
   is not available as a safety net — a safe flash target must be real signed firmware.
 - **Newest devices are locked.** Samsung disabled download mode on the Galaxy S26 / Z Fold 7

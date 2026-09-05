@@ -30,6 +30,9 @@ fn main() -> ExitCode {
         Some("tar-list") => cmd_tar_list(args.get(2)),
         Some("flash-plan") => cmd_flash_plan(&args[2..]),
         Some("flash") => cmd_flash(&args[2..]),
+        Some("factory-reset") => cmd_factory_reset(&args[2..]),
+        Some("erase") => cmd_erase(&args[2..]),
+        Some("set-region") => cmd_set_region(&args[2..]),
         Some("reboot") => cmd_reboot(args.get(2)),
         Some("end") => cmd_end(),
         Some("shell") => cmd_shell(),
@@ -58,9 +61,12 @@ fn print_usage() {
          \x20 thor tar-list <archive>   List the files in an Odin .tar / .tar.md5 archive\n\
          \x20 thor flash-plan [--pit <pit>] <file> [partition]\n\
          \x20                           Dry run: show what flashing <file> would do (no writes)\n\
-         \x20 thor flash [--execute] [--yes] [--reboot|--reboot-download|--shutdown] <file> [partition]\n\
-         \x20                           Flash <file> to its partition. WITHOUT --execute this is a\n\
-         \x20                           dry run (identical to flash-plan); --execute writes to the device.\n\
+         \x20 thor flash [--execute] [--yes] [--tflash] [--reboot|--reboot-download|--shutdown] <file> [partition]\n\
+         \x20                           Flash <file> (image or .tar) to its partition(s). WITHOUT --execute\n\
+         \x20                           this is a dry run; --execute writes. --tflash targets a microSD.\n\
+         \x20 thor factory-reset --execute [--yes] [--reboot|…]   Wipe /data (factory reset)\n\
+         \x20 thor erase <partition> --size <bytes> --execute [--yes]   Zero-fill a partition\n\
+         \x20 thor set-region <XAA> --execute [--yes]   Set the CSC region code (UNVERIFIED, see docs)\n\
          \x20 thor reboot [normal|download]   Reboot the device (default normal)\n\
          \x20 thor end                  Shut the device down / end the session\n\
          \x20 thor shell                Interactive session: connect once, run many commands\n"
@@ -414,6 +420,7 @@ fn cmd_flash(args: &[String]) -> Result<(), Box<dyn Error>> {
     let mut pit_file: Option<&str> = None;
     let mut execute = false;
     let mut assume_yes = false;
+    let mut tflash = false;
     let mut finish_flag: Option<&str> = None;
     let mut positional: Vec<&str> = Vec::new();
     let mut i = 0;
@@ -426,6 +433,10 @@ fn cmd_flash(args: &[String]) -> Result<(), Box<dyn Error>> {
                         .ok_or("--pit needs a file path")?,
                 );
                 i += 2;
+            }
+            "--tflash" => {
+                tflash = true;
+                i += 1;
             }
             "--execute" => {
                 execute = true;
@@ -473,21 +484,29 @@ fn cmd_flash(args: &[String]) -> Result<(), Box<dyn Error>> {
         partition,
         parse_finish(finish_flag)?,
         assume_yes,
+        tflash,
     )
 }
 
-/// **Destructive.** Flash a single image to its partition on the connected device, after a
-/// typed confirmation. Archives are rejected here (whole-archive flashing is a follow-up).
+/// **Destructive.** Flash a single image (or dispatch a whole archive) to the connected
+/// device, after a typed confirmation. With `tflash`, T-Flash mode is enabled first so the
+/// flash targets an inserted microSD instead of internal storage.
 fn do_flash_live(
     file: &str,
     base: &str,
     partition: Option<&str>,
     finish: Finish,
     assume_yes: bool,
+    tflash: bool,
 ) -> Result<(), Box<dyn Error>> {
     let mut odin = open_session()?;
     let pit = PitData::parse(&odin.dump_pit()?)?;
     let params = odin.params().ok_or("session has no flash params")?;
+
+    if tflash {
+        println!("Enabling T-Flash — the flash will target an inserted microSD card…");
+        odin.enable_tflash()?;
+    }
 
     if base.ends_with(".tar") || base.ends_with(".tar.md5") {
         if partition.is_some() {
@@ -596,7 +615,7 @@ fn flash_archive_live(
         targets.len()
     );
 
-    if !confirm_flash_archive(any_critical, targets.len(), assume_yes)? {
+    if !confirm_flash_archive(any_critical, assume_yes)? {
         println!("Aborted — nothing was written.");
         return finish_session(odin, Finish::Leave);
     }
@@ -652,11 +671,22 @@ fn flash_archive_live(
 }
 
 /// Confirm a whole-archive flash. Typing each partition name is impractical for many images,
-/// so this gate requires typing the literal word `FLASH`, warns when a critical partition is
-/// included, and refuses a non-interactive stdin unless `--yes` was given.
-fn confirm_flash_archive(
-    any_critical: bool,
-    count: usize,
+/// so this gate requires typing the literal word `FLASH` (see [`confirm_typed`]).
+fn confirm_flash_archive(any_critical: bool, assume_yes: bool) -> Result<bool, Box<dyn Error>> {
+    let warn = any_critical.then_some(
+        "this archive includes a bootloader/critical partition — a bad flash here can \
+         HARD-BRICK the device.",
+    );
+    confirm_typed("FLASH", warn, assume_yes)
+}
+
+/// Shared confirmation gate for a destructive action keyed on a literal `word`: prints an
+/// optional `warning`, then requires the user to type `word` exactly (case-sensitive) — a
+/// stronger gate than y/n. `--yes` skips it (for automation); a non-interactive stdin is
+/// refused so nothing destructive ever runs unattended without `--yes`.
+fn confirm_typed(
+    word: &str,
+    warning: Option<&str>,
     assume_yes: bool,
 ) -> Result<bool, Box<dyn Error>> {
     if assume_yes {
@@ -665,22 +695,193 @@ fn confirm_flash_archive(
     }
     if !std::io::stdin().is_terminal() {
         return Err(
-            "refusing to flash: stdin isn't a terminal and --yes wasn't given, so the \
-             confirmation can't be answered"
+            "refusing: stdin isn't a terminal and --yes wasn't given, so the confirmation \
+             can't be answered"
                 .into(),
         );
     }
-    if any_critical {
-        println!(
-            "\nWARNING: this archive includes a bootloader/critical partition — a bad flash \
-             here can HARD-BRICK the device."
-        );
+    if let Some(w) = warning {
+        println!("\nWARNING: {w}");
     }
-    print!("\nType FLASH (capitals) to flash all {count} partition(s), anything else aborts: ");
+    print!("\nType {word} to proceed (anything else aborts): ");
     std::io::stdout().flush()?;
     let mut line = String::new();
     std::io::stdin().read_line(&mut line)?;
-    Ok(line.trim() == "FLASH")
+    Ok(line.trim() == word)
+}
+
+/// Flags shared by the standalone destructive commands (factory-reset / set-region).
+struct ActionArgs<'a> {
+    execute: bool,
+    assume_yes: bool,
+    finish: Option<&'a str>,
+    positional: Vec<&'a str>,
+}
+
+fn parse_action_args(args: &[String]) -> Result<ActionArgs<'_>, Box<dyn Error>> {
+    let mut a = ActionArgs {
+        execute: false,
+        assume_yes: false,
+        finish: None,
+        positional: Vec::new(),
+    };
+    for arg in args {
+        match arg.as_str() {
+            "--execute" => a.execute = true,
+            "--yes" | "-y" => a.assume_yes = true,
+            s @ ("--reboot" | "--reboot-download" | "--shutdown") => a.finish = Some(s),
+            other => a.positional.push(other),
+        }
+    }
+    Ok(a)
+}
+
+/// **Destructive.** Factory-reset the device — wipe the userdata (`/data`) partition. Gated:
+/// needs `--execute` and a typed `ERASE`.
+fn cmd_factory_reset(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let a = parse_action_args(args)?;
+    if !a.execute {
+        return Err(
+            "factory-reset wipes /data — re-run with --execute (and confirm) to do it".into(),
+        );
+    }
+    let mut odin = open_session()?;
+    println!("\nAbout to FACTORY RESET — this wipes the /data (userdata) partition.");
+    let warn = "on a device with an unlocked bootloader this can trip Samsung's VaultKeeper, \
+                which re-locks the bootloader after /data is wiped until you finish setup online.";
+    if !confirm_typed("ERASE", Some(warn), a.assume_yes)? {
+        println!("Aborted — nothing was erased.");
+        return finish_session(odin, Finish::Leave);
+    }
+    println!("\nErasing userdata (this can take a few minutes)…");
+    odin.erase_user_data()?;
+    println!("Factory reset complete.");
+    finish_session(odin, parse_finish(a.finish)?)
+}
+
+/// **Destructive.** Zero-fill a partition — the C#'s "erase partition", built on the flash
+/// engine with an empty source. Requires `--size <bytes>` (the PIT carries no reliable
+/// partition size to infer, so the caller states how many zero bytes to write).
+fn cmd_erase(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let mut execute = false;
+    let mut assume_yes = false;
+    let mut finish_flag: Option<&str> = None;
+    let mut size: Option<i64> = None;
+    let mut positional: Vec<&str> = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--execute" => {
+                execute = true;
+                i += 1;
+            }
+            "--yes" | "-y" => {
+                assume_yes = true;
+                i += 1;
+            }
+            "--size" => {
+                let v = args.get(i + 1).ok_or("--size needs a byte count")?;
+                size = Some(
+                    v.parse()
+                        .map_err(|_| "invalid --size (want a byte count)")?,
+                );
+                i += 2;
+            }
+            f @ ("--reboot" | "--reboot-download" | "--shutdown") => {
+                finish_flag = Some(f);
+                i += 1;
+            }
+            other => {
+                positional.push(other);
+                i += 1;
+            }
+        }
+    }
+    let partition = *positional
+        .first()
+        .ok_or("usage: thor erase <partition> --size <bytes> --execute [--yes]")?;
+    let size = size.ok_or("erase needs --size <bytes> (the number of zero bytes to write)")?;
+    if size <= 0 {
+        return Err("--size must be positive".into());
+    }
+    if !execute {
+        return Err(format!(
+            "erase would zero-fill {partition} with {size} bytes — re-run with --execute to do it"
+        )
+        .into());
+    }
+
+    let mut odin = open_session()?;
+    let pit = PitData::parse(&odin.dump_pit()?)?;
+    let params = odin.params().ok_or("session has no flash params")?;
+    let entry = match_partition(&pit, partition, Some(partition))
+        .ok_or_else(|| available_partitions_err(&pit))?
+        .clone();
+
+    println!("\nAbout to ERASE (zero-fill) — this WRITES zeros to the device:");
+    print_partition_plan(
+        &format!("{} (id {})", entry.partition, entry.partition_id),
+        size,
+        &params,
+    );
+    if !confirm_flash(&entry.partition, assume_yes)? {
+        println!("Aborted — nothing was written.");
+        return finish_session(odin, Finish::Leave);
+    }
+
+    println!("\nErasing {}…", entry.partition);
+    odin.set_total_bytes(size)?;
+    let width = 30usize;
+    odin.flash_partition(None, &entry, size, |p| {
+        print!(
+            "\r  {}  seq {}/{}",
+            progress::progress_bar(p.sent_bytes, p.total_bytes, width),
+            p.sequence_index + 1,
+            p.total_sequences
+        );
+        let _ = std::io::stdout().flush();
+    })?;
+    println!(
+        "\r  {}  done{:<24}",
+        progress::progress_bar(size, size, width),
+        ""
+    );
+    println!(
+        "Erased {} ({}).",
+        entry.partition,
+        progress::human_bytes(size)
+    );
+    finish_session(odin, parse_finish(finish_flag)?)
+}
+
+/// Set the device's region (CSC) code. **UNVERIFIED** — in the reference tool this shares
+/// opcode `0x08` with T-Flash enable (see roadmap F8), so it may enable T-Flash instead.
+/// Gated behind `--execute` and a typed `YES`.
+fn cmd_set_region(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let a = parse_action_args(args)?;
+    let code = a
+        .positional
+        .first()
+        .copied()
+        .ok_or("usage: thor set-region <XAA> --execute [--yes]")?;
+    if code.len() != 3 {
+        return Err("a region code is exactly 3 characters (e.g. XAA)".into());
+    }
+    let code = code.to_ascii_uppercase();
+    if !a.execute {
+        return Err(format!("would set region to {code} — re-run with --execute to do it").into());
+    }
+    let mut odin = open_session()?;
+    let warn = "UNVERIFIED — in the reference tool 'set region' shares opcode 0x08 with \
+                T-Flash enable (likely a bug), so this may enable T-Flash rather than change \
+                the region. See docs/port/roadmap.md (F8).";
+    if !confirm_typed("YES", Some(warn), a.assume_yes)? {
+        println!("Aborted — region unchanged.");
+        return finish_session(odin, Finish::Leave);
+    }
+    odin.set_region_code(&code)?;
+    println!("Region code set to {code}.");
+    finish_session(odin, parse_finish(a.finish)?)
 }
 
 /// Open `file` as a flash source, returning the reader and the number of bytes that will

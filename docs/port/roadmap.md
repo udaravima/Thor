@@ -35,6 +35,7 @@ feature candidates. Living document.
 | F5 | `disconnect` leaves stale session state | model session as an owned value; dropping it ends the session (Rust ownership makes the bug structurally impossible) | ⬜ |
 | F6 | Dormant `_writeZlp` write path | make ZLP-after-write an explicit, documented option (default off); keep ZLP read | ⬜ |
 | F7 | `SharpCompress` unused dependency | simply not carried over | ✅ n/a |
+| F8 | `SetRegionCode` and `EnableTFlash` **both send session sub-command `0x08`** — almost certainly a copy-paste bug in the C# (`SetRegionCode` cloned from `EnableTFlash` without changing the opcode). Consequence: "set region" may actually enable T-Flash. | Ported faithfully but marked **unverified**; `set_region_code` carries the caveat in its docs and the `set-region` CLI prints it before a typed confirmation. Needs a hardware capture to resolve the true opcode. | ⬜ flagged |
 
 ## Feature candidates (include where cheap; revisit the rest)
 
@@ -60,7 +61,8 @@ feature candidates. Living document.
 
 M1 read-only skeleton ✅ → **M2 flashing engine ✅ (engine + dry-run + single-image & whole-
 archive live flash, all gated; not yet fired at real hardware)** →
-M3 remaining Odin ops (session lifecycle ✅; erase/factory-reset/set-region/T-Flash pending) →
+M3 remaining Odin ops ✅ (session lifecycle; factory-reset, partition erase, T-Flash, set-region
+— all gated; set-region unverified per F8) →
 M4 archives (tar/lz4) ✅ → M5 confirm Windows/macOS backends → M6 polish (REPL parity,
 packaging). See [rust-milestone-1.md](rust-milestone-1.md) for M1.
 
@@ -130,3 +132,49 @@ Session end/reboot (0x67 region) for clean teardown — ✅ done (see M3 line).
   handles a single image (`.lz4` size-resolved) and offline (`--pit`) planning.
 - Demoed on a mixed `AP_demo.tar.md5`: `sbl1.mbn.lz4`→SBL1 (2 parts), `aboot.mbn`→ABOOT (padded
   to 1 MiB), `unknown.img` skipped. Still zero device risk — nothing writes to a partition.
+
+### M3 status (2026-09-06) — ✅ destructive ops, all gated
+
+The remaining session-region (`0x64`) commands, ported from the C# `Odin.cs` (TDD, 5 new
+mock tests → 63 total):
+
+- `erase_user_data` (`0x64/0x07`, `LONG_TIMEOUT` 600 s) — factory reset. CLI `factory-reset`,
+  typed `ERASE`, warns about VaultKeeper (below).
+- `enable_tflash` (`0x64/0x08`) — sets the `tflash_enabled` flag; errors if already on. CLI
+  `flash --tflash` enables it before flashing, so the flash targets an inserted microSD.
+- `set_region_code` (`0x64/0x08` + 3-char string) — **unverified, see F8**: shares `0x08` with
+  T-Flash enable. CLI `set-region`, typed `YES`, prints the F8 caveat.
+- Partition zero-erase — not a new opcode; it's `flash_partition(None, …)` (the tested erase
+  path). CLI `erase <partition> --size <bytes>`, typed partition name. `--size` is required
+  because the PIT has no reliable per-partition byte size to infer.
+
+All four are dry-run-by-default (`--execute` to act), refuse a non-interactive stdin without
+`--yes`, and reuse the same typed-confirmation gate as `flash`. Nothing fired at real hardware.
+
+## Community research (2026-09-06) — hidden mechanisms & protocol updates
+
+Sweep of Heimdall, XDA, and download-mode write-ups for anything we should keep in mind. What's
+actionable:
+
+- **Odin protocol version 4.** Odin 3.12.xx sends BeginSession proto-version `3`; newer Odin
+  sends `4` (Heimdall PR #459 — first needed for US S8/S8+). We sidestep the whole issue by
+  sending `i32::MAX` as a catch-all (as the C# does), which is *why* it works across
+  generations — but a real v4 bootloader could in principle behave differently; worth a capture
+  if we ever see a version-related `BeginSession` failure. No code change now.
+- **Rollback protection (anti-rollback fuses).** Flashing firmware older than the fused RP
+  (rollback-protection) level fails with `SW REV CHECK FAIL`. This is a common real failure our
+  decoder currently lumps into `Unknown`/`Auth`. TODO: capture the actual `0xFF` code for it and
+  add a `FlashFailKind` variant with a clear message ("firmware too old — anti-rollback").
+- **VaultKeeper.** On unlocked bootloaders, wiping `/data` triggers VaultKeeper to *re-lock* the
+  bootloader until setup is completed online. Already surfaced as a warning on `factory-reset`.
+- **Any non-handshake request locks the device.** Confirmed: in download mode the device waits
+  only for `ODIN`/`LOKE`; any other first packet drops it into an error state — which is exactly
+  why a connection can't be reused across invocations. Validates our reboot-between-attempts UX
+  and the `shell` REPL.
+- **Empty-bulk-transfer / ZLP after file parts.** Heimdall sends (and tolerates a failed) empty
+  bulk transfer around file transfers; some bootloaders expect a ZLP at end-of-transfer. Ties
+  directly to fix **F6** (our dormant ZLP-after-write path) — the item to revisit if a real
+  flash stalls at "end of file transfer sequence".
+- **Access is shrinking, as expected.** One UI 8 (mid-2025) removed bootloader unlocking even
+  on international models; 2026 devices require enabling *Maintenance Mode* before download mode
+  is reachable. Reinforces the port's framing: target the large base of existing devices.

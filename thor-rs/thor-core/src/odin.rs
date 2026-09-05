@@ -18,6 +18,10 @@ const FAIL_MARKER: u8 = 0xFF;
 /// Default timeout for ordinary Odin command/acknowledge exchanges.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Long timeout for slow session commands — a userdata erase, T-Flash enable, or region set
+/// can take minutes on the device. Matches the reference C#'s 600000 ms.
+pub const LONG_TIMEOUT: Duration = Duration::from_secs(600);
+
 /// Odin protocol region opcodes (byte 0 of a command packet).
 mod region {
     pub const SESSION: i32 = 0x64;
@@ -154,6 +158,8 @@ pub struct Odin<T: Transport> {
     pub bootloader_update: bool,
     /// Reset the flash counter after a successful flash (default true, matching the C#).
     pub reset_flash_count: bool,
+    /// Whether T-Flash mode has been enabled this session (see [`enable_tflash`](Odin::enable_tflash)).
+    tflash_enabled: bool,
 }
 
 impl<T: Transport> Odin<T> {
@@ -166,7 +172,13 @@ impl<T: Transport> Odin<T> {
             efs_clear: false,
             bootloader_update: false,
             reset_flash_count: true,
+            tflash_enabled: false,
         }
+    }
+
+    /// Whether T-Flash mode has been enabled this session.
+    pub fn tflash_enabled(&self) -> bool {
+        self.tflash_enabled
     }
 
     /// The bootloader version, once [`begin_session`](Odin::begin_session) has run.
@@ -295,6 +307,53 @@ impl<T: Transport> Odin<T> {
         cmd.write_i64(8, total);
         self.transport.bulk_write(cmd.as_bytes(), DEFAULT_TIMEOUT)?;
         ack(&mut self.transport, 8)?;
+        Ok(())
+    }
+
+    /// Erase the userdata partition — a **factory reset** (`0x64/0x07`). Destructive and slow
+    /// (can take minutes), so it uses [`LONG_TIMEOUT`].
+    ///
+    /// Note: on a device with an unlocked bootloader this can trip Samsung's *VaultKeeper*,
+    /// which re-locks the bootloader after `/data` is wiped until setup is completed online.
+    pub fn erase_user_data(&mut self) -> Result<(), OdinError> {
+        let cmd = Packet::command(region::SESSION, 0x07);
+        self.transport.bulk_write(cmd.as_bytes(), DEFAULT_TIMEOUT)?;
+        ack_with(&mut self.transport, 8, LONG_TIMEOUT)?;
+        Ok(())
+    }
+
+    /// Enable **T-Flash** mode (`0x64/0x08`): the *next* flash targets an inserted microSD
+    /// card instead of internal storage. Errors if already enabled. Uses [`LONG_TIMEOUT`].
+    pub fn enable_tflash(&mut self) -> Result<(), OdinError> {
+        if self.tflash_enabled {
+            return Err(OdinError::Protocol(
+                "T-Flash mode is already enabled".into(),
+            ));
+        }
+        let cmd = Packet::command(region::SESSION, 0x08);
+        self.transport.bulk_write(cmd.as_bytes(), DEFAULT_TIMEOUT)?;
+        ack_with(&mut self.transport, 8, LONG_TIMEOUT)?;
+        self.tflash_enabled = true;
+        Ok(())
+    }
+
+    /// Set the device **region (CSC) code** — exactly 3 characters (`0x64/0x08` + string).
+    ///
+    /// UNVERIFIED: in the reference C# this shares sub-command `0x08` with
+    /// [`enable_tflash`](Odin::enable_tflash) — almost certainly a copy-paste bug — so on a
+    /// real device this may actually just enable T-Flash rather than change the region. Ported
+    /// faithfully and gated; do not rely on it until confirmed on hardware. See roadmap F8.
+    pub fn set_region_code(&mut self, code: &str) -> Result<(), OdinError> {
+        if code.len() != 3 {
+            return Err(OdinError::Protocol(format!(
+                "region code must be exactly 3 characters, got {}",
+                code.len()
+            )));
+        }
+        let mut cmd = Packet::command(region::SESSION, 0x08);
+        cmd.write_str(8, code);
+        self.transport.bulk_write(cmd.as_bytes(), DEFAULT_TIMEOUT)?;
+        ack_with(&mut self.transport, 8, LONG_TIMEOUT)?;
         Ok(())
     }
 
@@ -447,9 +506,15 @@ pub struct FlashProgress {
     pub state: FlashState,
 }
 
-/// Read exactly `want` bytes into an ack, or fail with a protocol error.
+/// Read exactly `want` bytes into an ack (using [`DEFAULT_TIMEOUT`]), or fail with a protocol
+/// error.
 fn ack<T: Transport>(t: &mut T, want: usize) -> Result<Vec<u8>, OdinError> {
-    let buf = t.bulk_read(want, DEFAULT_TIMEOUT)?;
+    ack_with(t, want, DEFAULT_TIMEOUT)
+}
+
+/// Like [`ack`], but with an explicit timeout — for slow commands (erase, T-Flash, region).
+fn ack_with<T: Transport>(t: &mut T, want: usize, timeout: Duration) -> Result<Vec<u8>, OdinError> {
+    let buf = t.bulk_read(want, timeout)?;
     if buf.len() != want {
         return Err(OdinError::Protocol(format!(
             "expected {want}-byte reply, got {}",
@@ -634,6 +699,60 @@ mod tests {
             assert_eq!(&mock.writes[i][0..4], le(*region).as_slice());
             assert_eq!(&mock.writes[i][4..8], le(*sub).as_slice());
         }
+    }
+
+    #[test]
+    fn erase_user_data_sends_session_0x07() {
+        let mut mock = MockTransport::with_reads(vec![ack0()]);
+        {
+            let mut odin = Odin::new(&mut mock);
+            odin.erase_user_data().unwrap();
+        }
+        assert_eq!(&mock.writes[0][0..4], &le(0x64));
+        assert_eq!(&mock.writes[0][4..8], &le(0x07));
+    }
+
+    #[test]
+    fn enable_tflash_sends_0x08_and_sets_flag() {
+        let mut mock = MockTransport::with_reads(vec![ack0()]);
+        let enabled = {
+            let mut odin = Odin::new(&mut mock);
+            odin.enable_tflash().unwrap();
+            odin.tflash_enabled()
+        };
+        assert!(enabled, "T-Flash flag should be set after enable");
+        assert_eq!(&mock.writes[0][0..4], &le(0x64));
+        assert_eq!(&mock.writes[0][4..8], &le(0x08));
+    }
+
+    #[test]
+    fn enable_tflash_twice_errors() {
+        let mut mock = MockTransport::with_reads(vec![ack0(), ack0()]);
+        let mut odin = Odin::new(&mut mock);
+        odin.enable_tflash().unwrap();
+        assert!(matches!(odin.enable_tflash(), Err(OdinError::Protocol(_))));
+    }
+
+    #[test]
+    fn set_region_code_writes_three_char_code() {
+        let mut mock = MockTransport::with_reads(vec![ack0()]);
+        {
+            let mut odin = Odin::new(&mut mock);
+            odin.set_region_code("XAA").unwrap();
+        }
+        assert_eq!(&mock.writes[0][0..4], &le(0x64));
+        assert_eq!(&mock.writes[0][4..8], &le(0x08));
+        assert_eq!(&mock.writes[0][8..11], b"XAA");
+    }
+
+    #[test]
+    fn set_region_code_rejects_wrong_length() {
+        let mut mock = MockTransport::with_reads(vec![]);
+        let mut odin = Odin::new(&mut mock);
+        assert!(matches!(
+            odin.set_region_code("XA"),
+            Err(OdinError::Protocol(_))
+        ));
     }
 
     #[test]
