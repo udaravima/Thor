@@ -26,12 +26,17 @@ flashing, erase, or writes of any kind in this milestone.
 | 3 | LE byte helpers (`Packet` build, read i32) | pure | round-trip unit tests | ✅ done (8 tests) |
 | 4 | Odin failure decode (`0xFF` + error codes) | pure | decode `-2..-7` + unknown | ✅ done (5 tests) |
 | 5 | Flash-sequence math (`plan_flash`) | pure | vectors for v0/1 (128 KiB) and v2+ (1 MiB) | ✅ done (7 tests) |
-| 6 | `UsbHandler` trait + nusb Linux backend | I/O | live device (supervised) | ⬜ next — needs hardware |
-| 7 | Odin session: handshake, begin, dump_pit | I/O | live device (supervised) | ⬜ |
+| 6a | `Transport` trait + scripted mock | seam | used by task 7 tests | ✅ done |
+| 7 | Odin session: handshake, begin, dump_pit | logic | mock-tested (6 tests); live validation pending | ✅ logic done |
+| 6b | nusb backend (list/open/claim/bulk) | I/O | live device (supervised) | ⬜ next — needs hardware |
 | 8 | `thor-cli` minimal REPL (read-only cmds) | I/O | manual, vs C# on the same phone | ⬜ |
 
-**Engine status:** all pure logic complete — 28 tests green, clippy clean. Modules:
-`pit`, `proto` (packet builder), `odin` (failure decode), `flash` (sequence planner).
+**Engine status:** all pure + protocol-sequence logic complete — 35 tests green, clippy
+clean. Modules: `pit`, `proto` (packet builder), `odin` (failure decode + session:
+handshake/begin/dump), `flash` (sequence planner), `transport` (trait + mock).
+
+**Remaining for M1:** the nusb backend (`Transport` impl over real USB) and a minimal CLI,
+then the live acceptance test — `dumpPit` on the phone diffed against `dev_files/sample-pit.pit`.
 
 **Acceptance test for M1:** on the user's machine, `dumpPit out.pit` from the Rust build
 produces a file that matches the C# Thor's dump of the same phone byte-for-byte, and
