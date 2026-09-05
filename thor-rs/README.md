@@ -5,11 +5,13 @@ Samsung's **Odin** firmware flasher, which talks to Galaxy devices in **download
 USB. This port keeps what makes Thor special (raw USB, no libusb) while adding cross-platform
 support, a testable engine, and a scriptable CLI.
 
-> **Status: read-only + dry-run, validated on real hardware.** Every non-destructive
-> operation works and is proven byte-for-byte against the reference C# tool. The one
-> destructive operation — actually **writing** firmware (`flashFile`) — is deliberately not
-> wired yet, because its failure mode is a bricked device. The engine behind it is built and
-> tested; enabling it needs a safe target (a spare device, or exact stock signed firmware).
+> **Status: read-only + dry-run validated on real hardware; single-image live flash built
+> and gated.** Every non-destructive operation is proven byte-for-byte against the reference
+> C# tool. Writing firmware — the one destructive operation, whose failure mode is a bricked
+> device — is now implemented for a single partition image (`thor flash --execute`), behind a
+> dry-run default and a typed confirmation, but has **not** yet been fired at real hardware
+> pending a safe target (a spare device or exact stock signed firmware). Whole-archive live
+> flashing is the next step.
 
 ## What it can do today
 
@@ -20,6 +22,7 @@ support, a testable engine, and a scriptable CLI.
 | `thor print-pit [file]` | Pretty-print a PIT — from a file, or dumped live |
 | `thor tar-list <archive>` | List the images in an Odin `.tar` / `.tar.md5` |
 | `thor flash-plan [--pit <pit>] <file> [partition]` | **Dry run** — show exactly what flashing would do (sequences, parts, sizes), writing nothing. Handles single images, whole archives, and `.lz4` |
+| `thor flash [--execute] [--yes] [--reboot\|…] <file> [partition]` | Flash one image to its partition. **Without `--execute`** it's a dry run (identical to `flash-plan`); **with `--execute`** it writes, after showing the plan and requiring you to type the partition name. `.lz4` is decompressed on the fly |
 | `thor reboot [normal\|download]` · `thor end` | Reboot / shut down the device |
 | `thor shell` | **Interactive session** — connect once, run many commands |
 
@@ -36,7 +39,7 @@ Windows/macOS but hasn't been verified there yet).
 ```sh
 cd thor-rs
 cargo build --release          # binary at target/release/thor  (~788 KB)
-cargo test                     # 48 tests, no device required
+cargo test                     # 57 tests, no device required
 ./target/release/thor list
 ```
 
@@ -84,7 +87,11 @@ against, and [`../docs/port/`](../docs/port/) for the [dev guide](../docs/port/d
 
 ## Safety notes
 
-- **Read-only today.** Nothing here writes to a partition.
+- **Writing is off by default and hard to trigger by accident.** `thor flash` is a dry run
+  unless you pass `--execute`; even then it prints the plan and makes you *type the partition
+  name* to proceed (`--yes` skips that only for automation), refuses a non-interactive stdin,
+  and warns loudly on the bootloader/critical partitions that hard-brick. Nothing writes on
+  the read-only commands.
 - **Signatures are enforced by the bootloader.** You can only flash officially-signed images
   for the exact model; a mismatch is rejected (`Auth`), not written as garbage.
 - **No partition read exists** in the Odin protocol, so "dump a partition and flash it back"

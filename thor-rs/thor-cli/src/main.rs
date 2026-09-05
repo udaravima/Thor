@@ -7,14 +7,16 @@
 //!
 //! Everything here is non-destructive. Flashing lands in later milestones.
 
+mod progress;
+
 use std::error::Error;
-use std::io::{Read, Write};
+use std::io::{IsTerminal, Read, Seek, Write};
 use std::process::ExitCode;
 
-use thor_core::archive::{list_archive_images, list_tar, lz4_content_size};
+use thor_core::archive::{list_archive_images, list_tar, lz4_content_size, lz4_stream_reader};
 use thor_core::backend::{self, NusbTransport};
 use thor_core::flash::{plan_flash, FlashParams};
-use thor_core::odin::Odin;
+use thor_core::odin::{FlashState, Odin};
 use thor_core::pit::{FieldMapper, PitData, PitEntry};
 
 fn main() -> ExitCode {
@@ -25,6 +27,7 @@ fn main() -> ExitCode {
         Some("print-pit") => cmd_print_pit(args.get(2)),
         Some("tar-list") => cmd_tar_list(args.get(2)),
         Some("flash-plan") => cmd_flash_plan(&args[2..]),
+        Some("flash") => cmd_flash(&args[2..]),
         Some("reboot") => cmd_reboot(args.get(2)),
         Some("end") => cmd_end(),
         Some("shell") => cmd_shell(),
@@ -53,6 +56,9 @@ fn print_usage() {
          \x20 thor tar-list <archive>   List the files in an Odin .tar / .tar.md5 archive\n\
          \x20 thor flash-plan [--pit <pit>] <file> [partition]\n\
          \x20                           Dry run: show what flashing <file> would do (no writes)\n\
+         \x20 thor flash [--execute] [--yes] [--reboot|--reboot-download|--shutdown] <file> [partition]\n\
+         \x20                           Flash <file> to its partition. WITHOUT --execute this is a\n\
+         \x20                           dry run (identical to flash-plan); --execute writes to the device.\n\
          \x20 thor reboot [normal|download]   Reboot the device (default normal)\n\
          \x20 thor end                  Shut the device down / end the session\n\
          \x20 thor shell                Interactive session: connect once, run many commands\n"
@@ -322,10 +328,33 @@ fn cmd_print_pit(path: Option<&String>) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// The last path component of `path` (e.g. `boot.img.lz4`), used to recognise archive and
+/// `.lz4` suffixes and to match a partition by its expected file name.
+fn basename(path: &str) -> &str {
+    std::path::Path::new(path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(path)
+}
+
+/// The "no matching partition" error, listing every partition and its expected file name so
+/// the user can pick a valid target.
+fn available_partitions_err(pit: &PitData) -> Box<dyn Error> {
+    let names: Vec<String> = pit
+        .entries
+        .iter()
+        .map(|e| format!("{} ({})", e.partition, e.file_name))
+        .collect();
+    format!(
+        "no matching partition. Available:\n  {}",
+        names.join("\n  ")
+    )
+    .into()
+}
+
 /// Dry run: connect, read the PIT, and show exactly what flashing `file` onto its partition
 /// would do — sequences, parts, sizes — **without writing anything**.
 fn cmd_flash_plan(args: &[String]) -> Result<(), Box<dyn Error>> {
-    // Optional `--pit <file>` plans offline (no device); otherwise plan live.
     let mut pit_file: Option<&str> = None;
     let mut positional: Vec<&str> = Vec::new();
     let mut i = 0;
@@ -349,14 +378,17 @@ fn cmd_flash_plan(args: &[String]) -> Result<(), Box<dyn Error>> {
         .first()
         .ok_or("usage: thor flash-plan [--pit <pit>] <file> [partition]")?;
     let partition = positional.get(1).copied();
+    run_flash_plan(file, basename(file), partition, pit_file)
+}
 
-    let base = std::path::Path::new(file)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or(file);
-
-    // Get the PIT and flash params — live from the device, or offline from a --pit file
-    // (assuming new-generation bootloader params, which we state).
+/// Resolve the PIT + flash params (live from the device, or offline from `--pit`) and print
+/// the dry-run plan. Shared by `flash-plan` and `flash` (without `--execute`).
+fn run_flash_plan(
+    file: &str,
+    base: &str,
+    partition: Option<&str>,
+    pit_file: Option<&str>,
+) -> Result<(), Box<dyn Error>> {
     let (pit, params) = if let Some(pf) = pit_file {
         println!("Offline planning (no device): assuming new-generation bootloader params.\n");
         (
@@ -370,8 +402,193 @@ fn cmd_flash_plan(args: &[String]) -> Result<(), Box<dyn Error>> {
         let params = odin.params().ok_or("session has no flash params")?;
         (pit, params)
     };
-
     do_flash_plan(file, base, partition, &pit, &params)
+}
+
+/// Flash `file` to its partition. Without `--execute` this is a dry run (identical to
+/// `flash-plan`); with `--execute` it writes to the connected device after a typed
+/// confirmation.
+fn cmd_flash(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let mut pit_file: Option<&str> = None;
+    let mut execute = false;
+    let mut assume_yes = false;
+    let mut finish_flag: Option<&str> = None;
+    let mut positional: Vec<&str> = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--pit" => {
+                pit_file = Some(
+                    args.get(i + 1)
+                        .map(String::as_str)
+                        .ok_or("--pit needs a file path")?,
+                );
+                i += 2;
+            }
+            "--execute" => {
+                execute = true;
+                i += 1;
+            }
+            "--yes" | "-y" => {
+                assume_yes = true;
+                i += 1;
+            }
+            f @ ("--reboot" | "--reboot-download" | "--shutdown") => {
+                finish_flag = Some(f);
+                i += 1;
+            }
+            other => {
+                positional.push(other);
+                i += 1;
+            }
+        }
+    }
+    let file = *positional.first().ok_or(
+        "usage: thor flash [--pit <pit>] [--execute] [--yes] \
+         [--reboot|--reboot-download|--shutdown] <file> [partition]",
+    )?;
+    let partition = positional.get(1).copied();
+    let base = basename(file);
+
+    if !execute {
+        if finish_flag.is_some() {
+            eprintln!(
+                "note: reboot/shutdown flags are ignored without --execute (a dry run never \
+                 touches the device)"
+            );
+        }
+        return run_flash_plan(file, base, partition, pit_file);
+    }
+
+    if pit_file.is_some() {
+        return Err(
+            "--pit can't be combined with --execute: a live flash uses the device's own PIT".into(),
+        );
+    }
+    do_flash_live(
+        file,
+        base,
+        partition,
+        parse_finish(finish_flag)?,
+        assume_yes,
+    )
+}
+
+/// **Destructive.** Flash a single image to its partition on the connected device, after a
+/// typed confirmation. Archives are rejected here (whole-archive flashing is a follow-up).
+fn do_flash_live(
+    file: &str,
+    base: &str,
+    partition: Option<&str>,
+    finish: Finish,
+    assume_yes: bool,
+) -> Result<(), Box<dyn Error>> {
+    if base.ends_with(".tar") || base.ends_with(".tar.md5") {
+        return Err(
+            "whole-archive live flashing isn't wired yet — flash images individually, \
+                    or use flash-plan to preview the archive"
+                .into(),
+        );
+    }
+
+    let mut odin = open_session()?;
+    let pit = PitData::parse(&odin.dump_pit()?)?;
+    let params = odin.params().ok_or("session has no flash params")?;
+
+    let entry = match_partition(&pit, base, partition)
+        .ok_or_else(|| available_partitions_err(&pit))?
+        .clone();
+    let (mut source, length) = open_flash_source(file, base)?;
+
+    println!("\nAbout to FLASH — this WRITES to the device:");
+    let target = format!(
+        "{} (id {}, binaryType {}, deviceType {})",
+        entry.partition, entry.partition_id, entry.binary_type, entry.device_type
+    );
+    print_partition_plan(&target, length, &params);
+
+    if !confirm_flash(&entry.partition, assume_yes)? {
+        println!("Aborted — nothing was written.");
+        return finish_session(odin, Finish::Leave);
+    }
+
+    println!("\nFlashing {}…", entry.partition);
+    odin.set_total_bytes(length)?;
+    let width = 30usize;
+    odin.flash_partition(Some(&mut *source), &entry, length, |p| {
+        let bar = progress::progress_bar(p.sent_bytes, p.total_bytes, width);
+        let state = match p.state {
+            FlashState::Sending => "send ",
+            FlashState::Flashing => "flash",
+        };
+        print!(
+            "\r  {bar}  seq {}/{}  {state}  {:>10}",
+            p.sequence_index + 1,
+            p.total_sequences,
+            progress::human_bytes(p.sent_bytes.min(p.total_bytes)),
+        );
+        let _ = std::io::stdout().flush();
+    })?;
+    println!(
+        "\r  {}  done{:<24}",
+        progress::progress_bar(length, length, width),
+        ""
+    );
+    println!(
+        "Flashed {} ({}).",
+        entry.partition,
+        progress::human_bytes(length)
+    );
+
+    finish_session(odin, finish)
+}
+
+/// Open `file` as a flash source, returning the reader and the number of bytes that will
+/// land on the device. A `.lz4` file is decompressed on the fly, and its on-device length is
+/// read from the frame's content-size header.
+fn open_flash_source(file: &str, base: &str) -> Result<(Box<dyn Read>, i64), Box<dyn Error>> {
+    let mut f = std::fs::File::open(file)?;
+    if base.ends_with(".lz4") {
+        let mut hdr = [0u8; 16];
+        let n = f.read(&mut hdr)?;
+        let size = lz4_content_size(&hdr[..n]).ok_or(
+            "this .lz4 has no content-size header, so the on-device length is unknown — \
+             decompress it first and flash the raw image",
+        )? as i64;
+        f.seek(std::io::SeekFrom::Start(0))?;
+        Ok((Box::new(lz4_stream_reader(f)), size))
+    } else {
+        let size = f.metadata()?.len() as i64;
+        Ok((Box::new(f), size))
+    }
+}
+
+/// Gate a live flash behind an explicit, deliberate confirmation. Unless `--yes` was given,
+/// the user must type the exact partition name (a stronger gate than y/n — it forces naming
+/// what's about to be overwritten). Refuses to proceed on a non-interactive stdin.
+fn confirm_flash(partition: &str, assume_yes: bool) -> Result<bool, Box<dyn Error>> {
+    if assume_yes {
+        println!("(--yes given: skipping confirmation)");
+        return Ok(true);
+    }
+    if !std::io::stdin().is_terminal() {
+        return Err(
+            "refusing to flash: stdin isn't a terminal and --yes wasn't given, so the \
+             confirmation can't be answered"
+                .into(),
+        );
+    }
+    if progress::is_critical_partition(partition) {
+        println!(
+            "\nWARNING: {partition} is a bootloader/critical partition — a bad flash here can \
+             HARD-BRICK the device."
+        );
+    }
+    print!("\nType the partition name '{partition}' to flash it (anything else aborts): ");
+    std::io::stdout().flush()?;
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line)?;
+    Ok(line.trim().eq_ignore_ascii_case(partition))
 }
 
 /// Print the dry-run plan for `file` against a PIT — a single image or a whole archive.

@@ -55,6 +55,14 @@ pub fn lz4_content_size(data: &[u8]) -> Option<u64> {
     Some(u64::from_le_bytes(bytes))
 }
 
+/// Wrap a reader in a streaming LZ4-frame decompressor: reads compressed bytes from
+/// `reader`, yields decompressed bytes. Lets a multi-GB image be flashed without ever
+/// holding it all in memory. The caller learns the decompressed length separately from
+/// [`lz4_content_size`].
+pub fn lz4_stream_reader<R: Read>(reader: R) -> impl Read {
+    lz4_flex::frame::FrameDecoder::new(reader)
+}
+
 /// Fully decompress an LZ4 frame into memory.
 pub fn decompress_lz4(data: &[u8]) -> Result<Vec<u8>, ArchiveError> {
     let mut out = Vec::new();
@@ -214,6 +222,17 @@ mod tests {
         let payload = b"the quick brown boot.img ".repeat(100);
         let compressed = lz4_compress_with_size(&payload);
         assert_eq!(decompress_lz4(&compressed).unwrap(), payload);
+    }
+
+    #[test]
+    fn lz4_stream_reader_round_trips() {
+        let payload = b"streamed partition image ".repeat(200);
+        let compressed = lz4_compress_with_size(&payload);
+        let mut out = Vec::new();
+        lz4_stream_reader(&compressed[..])
+            .read_to_end(&mut out)
+            .unwrap();
+        assert_eq!(out, payload);
     }
 
     #[test]
