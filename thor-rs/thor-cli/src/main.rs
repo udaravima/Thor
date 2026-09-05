@@ -11,7 +11,7 @@ use std::error::Error;
 use std::io::Read;
 use std::process::ExitCode;
 
-use thor_core::archive::{list_tar, lz4_content_size};
+use thor_core::archive::{list_archive_images, list_tar, lz4_content_size};
 use thor_core::backend::{self, NusbTransport};
 use thor_core::flash::{plan_flash, FlashParams};
 use thor_core::odin::Odin;
@@ -160,29 +160,12 @@ fn cmd_flash_plan(args: &[String]) -> Result<(), Box<dyn Error>> {
         .ok_or("usage: thor flash-plan [--pit <pit>] <file> [partition]")?;
     let partition = positional.get(1).copied();
 
-    let mut len = std::fs::metadata(file)?.len() as i64;
     let base = std::path::Path::new(file)
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or(file);
-    if base.ends_with(".lz4") {
-        // The size that matters is the decompressed (on-device) size, read cheaply from the
-        // LZ4 frame header rather than by decompressing the whole file.
-        let mut hdr = [0u8; 16];
-        let n = std::fs::File::open(file)?.read(&mut hdr)?;
-        match lz4_content_size(&hdr[..n]) {
-            Some(sz) => {
-                println!("LZ4: {len} compressed bytes → {sz} bytes on device (frame header)\n");
-                len = sz as i64;
-            }
-            None => println!(
-                "note: {base} is LZ4 but carries no content-size header; planning against the \
-                 compressed size — the real on-device size will differ.\n"
-            ),
-        }
-    }
 
-    // Get the PIT and the flash params — live from the device, or offline from a PIT file
+    // Get the PIT and flash params — live from the device, or offline from a --pit file
     // (assuming new-generation bootloader params, which we state).
     let (pit, params) = if let Some(pf) = pit_file {
         println!("Offline planning (no device): assuming new-generation bootloader params.\n");
@@ -195,6 +178,34 @@ fn cmd_flash_plan(args: &[String]) -> Result<(), Box<dyn Error>> {
         (pit, params)
     };
 
+    println!("DRY RUN — no data will be written to the device.");
+    println!(
+        "Packet:  {} bytes/part; one sequence = {} bytes\n",
+        params.packet_size,
+        params.sequence_size()
+    );
+
+    // Whole-archive planning for Odin .tar / .tar.md5 packages.
+    if base.ends_with(".tar") || base.ends_with(".tar.md5") {
+        return plan_archive(file, &pit, &params);
+    }
+
+    // Single image (optionally .lz4).
+    let mut len = std::fs::metadata(file)?.len() as i64;
+    if base.ends_with(".lz4") {
+        let mut hdr = [0u8; 16];
+        let n = std::fs::File::open(file)?.read(&mut hdr)?;
+        match lz4_content_size(&hdr[..n]) {
+            Some(sz) => {
+                println!("LZ4: {len} compressed bytes → {sz} bytes on device (frame header)");
+                len = sz as i64;
+            }
+            None => println!(
+                "note: {base} is LZ4 but carries no content-size header; planning against the \
+                 compressed size — the real on-device size will differ."
+            ),
+        }
+    }
     let entry = match_partition(&pit, base, partition).ok_or_else(|| {
         let names: Vec<String> = pit
             .entries
@@ -203,25 +214,23 @@ fn cmd_flash_plan(args: &[String]) -> Result<(), Box<dyn Error>> {
             .collect();
         format!("no matching partition. Available:\n  {}", names.join("\n  "))
     })?;
-
-    let plan = plan_flash(len, &params);
-    let on_wire: i64 = plan.iter().map(|s| s.aligned_size).sum();
-
-    println!("DRY RUN — no data will be written to the device.\n");
-    println!("File:    {file} ({len} bytes)");
-    println!(
-        "Target:  {} (id {}, binaryType {}, deviceType {})",
+    let target = format!(
+        "{} (id {}, binaryType {}, deviceType {})",
         entry.partition, entry.partition_id, entry.binary_type, entry.device_type
     );
-    println!(
-        "Packet:  {} bytes/part; one sequence = {} bytes",
-        params.packet_size,
-        params.sequence_size()
-    );
-    println!("Plan:    {} sequence(s), {on_wire} bytes on the wire", plan.len());
+    print_partition_plan(&target, len, &params);
+    Ok(())
+}
+
+/// Print the sequence/part plan for a single partition of `len` on-device bytes.
+fn print_partition_plan(target: &str, len: i64, params: &FlashParams) {
+    let plan = plan_flash(len, params);
+    let on_wire: i64 = plan.iter().map(|s| s.aligned_size).sum();
+    println!("{target}");
+    println!("    {len} B → {} sequence(s), {on_wire} B on the wire", plan.len());
     for s in &plan {
         println!(
-            "  seq {:>3}: {:>4} part(s), real {:>10} B, on-wire {:>10} B{}",
+            "    seq {:>3}: {:>4} part(s), real {:>10} B, on-wire {:>10} B{}",
             s.index,
             s.parts,
             s.real_size,
@@ -229,7 +238,39 @@ fn cmd_flash_plan(args: &[String]) -> Result<(), Box<dyn Error>> {
             if s.is_last { "  (last)" } else { "" }
         );
     }
+}
+
+/// Plan every image in an Odin archive against the PIT, resolving `.lz4` real sizes.
+fn plan_archive(file: &str, pit: &PitData, params: &FlashParams) -> Result<(), Box<dyn Error>> {
+    let images = list_archive_images(std::fs::File::open(file)?)?;
+    println!("Archive: {file} — {} image(s)\n", images.len());
+    let mut matched = 0;
+    for img in &images {
+        match match_archive_image(pit, &img.name) {
+            Some(entry) => {
+                matched += 1;
+                let comp = if img.compressed {
+                    format!("  [lz4 {}→{} B]", img.stored_size, img.real_size)
+                } else {
+                    String::new()
+                };
+                let target = format!("{} (id {}){comp}", entry.partition, entry.partition_id);
+                print_partition_plan(&target, img.real_size as i64, params);
+            }
+            None => println!("{}  — no matching PIT partition (skipped)", img.name),
+        }
+    }
+    println!("\n{matched}/{} image(s) matched to a partition.", images.len());
     Ok(())
+}
+
+/// Match a tar entry name to a PIT partition — direct, then with a trailing `.lz4` stripped.
+fn match_archive_image<'a>(pit: &'a PitData, entry_name: &str) -> Option<&'a PitEntry> {
+    pit.entries.iter().find(|e| e.file_name == entry_name).or_else(|| {
+        entry_name
+            .strip_suffix(".lz4")
+            .and_then(|n| pit.entries.iter().find(|e| e.file_name == n))
+    })
 }
 
 fn match_partition<'a>(

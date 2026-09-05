@@ -104,6 +104,60 @@ pub fn extract_tar<R: Read>(reader: R, name: &str) -> Result<Vec<u8>, ArchiveErr
     Err(ArchiveError::NotFound(name.to_string()))
 }
 
+/// One image inside a firmware archive, with its real (on-device) size resolved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArchiveImage {
+    /// Tar entry name, e.g. `boot.img.lz4`.
+    pub name: String,
+    /// Size as stored in the tar (compressed, for `.lz4`).
+    pub stored_size: u64,
+    /// Size once written to the device (LZ4-decompressed size for `.lz4`, else `stored_size`).
+    pub real_size: u64,
+    /// Whether the entry is LZ4-compressed.
+    pub compressed: bool,
+}
+
+/// List every top-level image in an archive with its real on-device size. For `.lz4`
+/// entries the decompressed size is read from the frame header (only ~16 bytes per entry),
+/// so this stays cheap even for multi-GB firmware.
+pub fn list_archive_images<R: Read>(reader: R) -> Result<Vec<ArchiveImage>, ArchiveError> {
+    let mut archive = tar::Archive::new(reader);
+    let entries = archive.entries().map_err(|e| ArchiveError::Tar(e.to_string()))?;
+    let mut out = Vec::new();
+    for entry in entries {
+        let mut entry = entry.map_err(|e| ArchiveError::Tar(e.to_string()))?;
+        let path = entry.path().map_err(|e| ArchiveError::Tar(e.to_string()))?;
+        if path.components().count() != 1 {
+            continue; // top-level files only
+        }
+        let name = path.to_string_lossy().into_owned();
+        let stored_size = entry.size();
+        let compressed = name.ends_with(".lz4");
+        let real_size = if compressed {
+            // Read just the frame header to learn the decompressed size, then move on.
+            let mut hdr = [0u8; 16];
+            let n = read_up_to(&mut entry, &mut hdr)?;
+            lz4_content_size(&hdr[..n]).unwrap_or(stored_size)
+        } else {
+            stored_size
+        };
+        out.push(ArchiveImage { name, stored_size, real_size, compressed });
+    }
+    Ok(out)
+}
+
+fn read_up_to(reader: &mut dyn Read, buf: &mut [u8]) -> Result<usize, ArchiveError> {
+    let mut filled = 0;
+    while filled < buf.len() {
+        match reader.read(&mut buf[filled..]) {
+            Ok(0) => break,
+            Ok(n) => filled += n,
+            Err(e) => return Err(ArchiveError::Tar(e.to_string())),
+        }
+    }
+    Ok(filled)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,6 +221,26 @@ mod tests {
     #[test]
     fn extract_tar_missing_is_not_found() {
         let tar = build_tar(&[("boot.img", b"BOOTDATA")]);
-        assert!(matches!(extract_tar(&tar[..],"nope.img"), Err(ArchiveError::NotFound(_))));
+        assert!(matches!(extract_tar(&tar[..], "nope.img"), Err(ArchiveError::NotFound(_))));
+    }
+
+    #[test]
+    fn list_archive_images_resolves_lz4_real_sizes() {
+        let payload = b"boot partition payload ".repeat(64); // 1472 bytes
+        let compressed = lz4_compress_with_size(&payload);
+        let tar = build_tar(&[("boot.img.lz4", &compressed), ("dtbo.img", b"DTBO-RAW-DATA")]);
+
+        let images = list_archive_images(&tar[..]).unwrap();
+        assert_eq!(images.len(), 2);
+
+        let boot = images.iter().find(|i| i.name == "boot.img.lz4").unwrap();
+        assert!(boot.compressed);
+        assert_eq!(boot.stored_size, compressed.len() as u64);
+        assert_eq!(boot.real_size, payload.len() as u64); // decompressed size from header
+
+        let dtbo = images.iter().find(|i| i.name == "dtbo.img").unwrap();
+        assert!(!dtbo.compressed);
+        assert_eq!(dtbo.real_size, dtbo.stored_size);
+        assert_eq!(dtbo.real_size, 13);
     }
 }

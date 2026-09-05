@@ -80,13 +80,16 @@ packaging). See [rust-milestone-1.md](rust-milestone-1.md) for M1.
   partition-read, so "dump and flash back unchanged" is not available as a safety net.
 - Session end/reboot (0x67 region) for clean teardown — small, likely folded into M3.
 
-### M4 status (2026-09-05) — archive + LZ4 core done
+### M4 status (2026-09-05) — ✅ archive + LZ4 handling complete
 
 - `archive` module: `lz4_content_size` (reads the decompressed size cheaply from the LZ4
-  frame header), `decompress_lz4`, and `list_tar` / `extract_tar` (generic over `Read`, so a
-  `File` streams instead of buffering multi-GB firmware). 6 unit tests against data built with
-  the real `lz4_flex` / `tar` crates.
-- CLI: `thor tar-list <archive>` lists an Odin `.tar`/`.tar.md5`; `flash-plan` now resolves a
-  `.lz4` file's real on-device size. Demoed: a 12 KB `boot.img.lz4` → 3,145,728 bytes → 3 parts.
-- **Next M4 increment:** whole-archive planning/flashing (match each contained partition to the
-  PIT, handle `.lz4` entries) — the building blocks are all in place.
+  frame header), `decompress_lz4`, `list_tar` / `extract_tar` (generic over `Read`, so a
+  `File` streams instead of buffering multi-GB firmware), and `list_archive_images` (per-image
+  real sizes, peeking only ~16 bytes of each `.lz4` entry). 7 unit tests against data built
+  with the real `lz4_flex` / `tar` crates.
+- CLI: `thor tar-list <archive>` lists an Odin `.tar`/`.tar.md5`; `thor flash-plan` now does
+  **whole-archive** dry-run planning — matches each contained image to a PIT partition (direct,
+  then with `.lz4` stripped), resolves `.lz4` real sizes, and skips unmatched entries. Also
+  handles a single image (`.lz4` size-resolved) and offline (`--pit`) planning.
+- Demoed on a mixed `AP_demo.tar.md5`: `sbl1.mbn.lz4`→SBL1 (2 parts), `aboot.mbn`→ABOOT (padded
+  to 1 MiB), `unknown.img` skipped. Still zero device risk — nothing writes to a partition.
