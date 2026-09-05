@@ -22,9 +22,7 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 mod region {
     pub const SESSION: i32 = 0x64;
     pub const PIT: i32 = 0x65;
-    #[allow(dead_code)] // used from M2 onward (flashing)
     pub const FLASH: i32 = 0x66;
-    #[allow(dead_code)]
     pub const END: i32 = 0x67;
 }
 
@@ -252,6 +250,35 @@ impl<T: Transport> Odin<T> {
         ack(&mut self.transport, 8)?;
 
         Ok(pit)
+    }
+
+    /// End the Odin session cleanly (`EndSession`, 0x67/0x00), leaving the device in
+    /// download mode.
+    pub fn end_session(&mut self) -> Result<(), OdinError> {
+        self.simple_command(region::END, 0x00)
+    }
+
+    /// Reboot into normal Android (0x67/0x01).
+    pub fn reboot(&mut self) -> Result<(), OdinError> {
+        self.simple_command(region::END, 0x01)
+    }
+
+    /// Reboot back into download mode (0x67/0x02). Not supported on every device.
+    pub fn reboot_to_odin(&mut self) -> Result<(), OdinError> {
+        self.simple_command(region::END, 0x02)
+    }
+
+    /// Power the device off (0x67/0x03).
+    pub fn shutdown(&mut self) -> Result<(), OdinError> {
+        self.simple_command(region::END, 0x03)
+    }
+
+    /// A command with no arguments that just expects an 8-byte ack.
+    fn simple_command(&mut self, region: i32, sub: i32) -> Result<(), OdinError> {
+        let cmd = Packet::command(region, sub);
+        self.transport.bulk_write(cmd.as_bytes(), DEFAULT_TIMEOUT)?;
+        ack(&mut self.transport, 8)?;
+        Ok(())
     }
 
     /// Announce the total number of bytes about to be flashed (`SetTotalBytes`, 0x64/0x02).
@@ -577,6 +604,23 @@ mod tests {
     }
     fn le(v: i32) -> [u8; 4] {
         v.to_le_bytes()
+    }
+
+    #[test]
+    fn session_lifecycle_commands_send_0x67_opcodes() {
+        let mut mock = MockTransport::with_reads(vec![ack0(), ack0(), ack0(), ack0()]);
+        {
+            let mut odin = Odin::new(&mut mock);
+            odin.end_session().unwrap();
+            odin.reboot().unwrap();
+            odin.reboot_to_odin().unwrap();
+            odin.shutdown().unwrap();
+        }
+        let expect = [(0x67, 0x00), (0x67, 0x01), (0x67, 0x02), (0x67, 0x03)];
+        for (i, (region, sub)) in expect.iter().enumerate() {
+            assert_eq!(&mock.writes[i][0..4], le(*region).as_slice());
+            assert_eq!(&mock.writes[i][4..8], le(*sub).as_slice());
+        }
     }
 
     #[test]

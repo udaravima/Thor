@@ -21,10 +21,12 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
     let result = match args.get(1).map(String::as_str) {
         Some("list") => cmd_list(),
-        Some("dump-pit") => cmd_dump_pit(args.get(2)),
+        Some("dump-pit") => cmd_dump_pit(&args[2..]),
         Some("print-pit") => cmd_print_pit(args.get(2)),
         Some("tar-list") => cmd_tar_list(args.get(2)),
         Some("flash-plan") => cmd_flash_plan(&args[2..]),
+        Some("reboot") => cmd_reboot(args.get(2)),
+        Some("end") => cmd_end(),
         _ => {
             print_usage();
             return ExitCode::from(2);
@@ -44,11 +46,14 @@ fn print_usage() {
         "Thor (Rust port) — read-only preview\n\n\
          USAGE:\n\
          \x20 thor list                 List connected Samsung devices\n\
-         \x20 thor dump-pit <out.pit>   Dump the device's partition table to a file\n\
+         \x20 thor dump-pit <out.pit> [--reboot|--reboot-download|--shutdown]\n\
+         \x20                           Dump the partition table, then optionally reboot\n\
          \x20 thor print-pit [file]     Print a PIT (from a file, or dumped live)\n\
          \x20 thor tar-list <archive>   List the files in an Odin .tar / .tar.md5 archive\n\
          \x20 thor flash-plan [--pit <pit>] <file> [partition]\n\
-         \x20                           Dry run: show what flashing <file> would do (no writes)\n"
+         \x20                           Dry run: show what flashing <file> would do (no writes)\n\
+         \x20 thor reboot [normal|download]   Reboot the device (default normal)\n\
+         \x20 thor end                  Shut the device down / end the session\n"
     );
 }
 
@@ -110,14 +115,82 @@ fn cmd_list() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn cmd_dump_pit(path: Option<&String>) -> Result<(), Box<dyn Error>> {
-    let path = path.ok_or("usage: thor dump-pit <output.pit>")?;
+fn cmd_dump_pit(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let path = args
+        .first()
+        .ok_or("usage: thor dump-pit <output.pit> [--reboot | --reboot-download | --shutdown]")?;
+    let finish = parse_finish(args.get(1).map(String::as_str))?;
     let mut odin = open_session()?;
     let pit = odin.dump_pit()?;
     std::fs::write(path, &pit)?;
     println!("Dumped {} bytes of PIT to {path}", pit.len());
-    println!("(device left in download mode — reboot it to exit)");
+    finish_session(odin, finish)
+}
+
+/// What to do with the session when a command finishes.
+enum Finish {
+    Leave,
+    RebootNormal,
+    RebootDownload,
+    Shutdown,
+}
+
+fn parse_finish(flag: Option<&str>) -> Result<Finish, Box<dyn Error>> {
+    Ok(match flag {
+        None => Finish::Leave,
+        Some("--reboot") => Finish::RebootNormal,
+        Some("--reboot-download") => Finish::RebootDownload,
+        Some("--shutdown") => Finish::Shutdown,
+        Some(o) => {
+            return Err(
+                format!("unknown option '{o}' (use --reboot | --reboot-download | --shutdown)")
+                    .into(),
+            )
+        }
+    })
+}
+
+/// End a session and optionally reboot/shutdown the device, so it isn't left stuck in
+/// download mode. A download-mode connection can't be reused across invocations, so this is
+/// the way to leave the device usable after a command.
+fn finish_session(mut odin: Odin<NusbTransport>, finish: Finish) -> Result<(), Box<dyn Error>> {
+    match finish {
+        Finish::Leave => println!("(device left in download mode — `thor reboot` to exit)"),
+        Finish::RebootNormal => {
+            let _ = odin.end_session();
+            odin.reboot()?;
+            println!("Rebooting into normal mode.");
+        }
+        Finish::RebootDownload => {
+            let _ = odin.end_session();
+            if odin.reboot_to_odin().is_err() {
+                println!("This device doesn't support reboot-to-download; doing a normal reboot.");
+                odin.reboot()?;
+            } else {
+                println!("Rebooting into download mode.");
+            }
+        }
+        Finish::Shutdown => {
+            if odin.shutdown().is_err() {
+                let _ = odin.end_session();
+            }
+            println!("Device shutting down.");
+        }
+    }
     Ok(())
+}
+
+fn cmd_reboot(mode: Option<&String>) -> Result<(), Box<dyn Error>> {
+    let finish = match mode.map(String::as_str) {
+        None | Some("normal") => Finish::RebootNormal,
+        Some("download") => Finish::RebootDownload,
+        Some(o) => return Err(format!("unknown reboot mode '{o}' (use normal | download)").into()),
+    };
+    finish_session(open_session()?, finish)
+}
+
+fn cmd_end() -> Result<(), Box<dyn Error>> {
+    finish_session(open_session()?, Finish::Shutdown)
 }
 
 fn cmd_print_pit(path: Option<&String>) -> Result<(), Box<dyn Error>> {

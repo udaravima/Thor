@@ -58,9 +58,15 @@ feature candidates. Living document.
 
 ## Milestone sequence
 
-M1 read-only skeleton ✅ → **M2 flashing engine (in progress)** → M3 remaining Odin ops →
-M4 archives (tar/lz4) → M5 confirm Windows/macOS backends → M6 polish (REPL parity,
+M1 read-only skeleton ✅ → **M2 flashing engine (engine + dry-run done; live flash gated)** →
+M3 remaining Odin ops (session lifecycle ✅; erase/factory-reset/set-region/T-Flash pending) →
+M4 archives (tar/lz4) ✅ → M5 confirm Windows/macOS backends → M6 polish (REPL parity,
 packaging). See [rust-milestone-1.md](rust-milestone-1.md) for M1.
+
+**Session lifecycle (0x67) done (2026-09-05):** `Odin::end_session/reboot/reboot_to_odin/
+shutdown`; CLI `thor reboot [normal|download]`, `thor end`, and a `--reboot`/`--reboot-download`/
+`--shutdown` finish flag on `dump-pit` (dump-then-reboot in one session, since a download-mode
+connection can't be reused across invocations). 48 tests, clippy clean.
 
 ### M2 status (2026-09-05)
 
