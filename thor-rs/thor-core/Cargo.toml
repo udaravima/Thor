@@ -1,0 +1,12 @@
+[package]
+name = "thor-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Engine for Thor: the Odin protocol, PIT parsing, and USB transport for flashing Samsung devices."
+
+[dependencies]
+
+[lints]
+workspace = true

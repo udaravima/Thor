@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = ["thor-core"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MPL-2.0"
+repository = "https://github.com/Samsung-Loki/Thor"
+
+[workspace.lints.clippy]
+# keep the port honest; tighten later
+all = "warn"

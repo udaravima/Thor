@@ -1,0 +1,682 @@
+PIT File
+├── Header
+│   ├── Unknown string: COM_TAR2
+│   ├── Project name: MSM8937
+│   ├── Version: v2 (new)
+│   └── Reserved: 0
+├── Entry #0
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 8192
+│   ├── Block Count: 1024
+│   ├── Partition Name: SBL1
+│   ├── Partition ID: 1
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: sbl1.mbn
+│   └── Empty Delta Name
+├── Entry #1
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 9216
+│   ├── Block Count: 1024
+│   ├── Partition Name: SBL1BAK
+│   ├── Partition ID: 2
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: 
+│   └── Empty Delta Name
+├── Entry #2
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 10240
+│   ├── Block Count: 64
+│   ├── Partition Name: DDR
+│   ├── Partition ID: 3
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: 
+│   └── Empty Delta Name
+├── Entry #3
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 10304
+│   ├── Block Count: 64
+│   ├── Partition Name: LIMITS
+│   ├── Partition ID: 4
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: 
+│   └── Empty Delta Name
+├── Entry #4
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 10368
+│   ├── Block Count: 4096
+│   ├── Partition Name: ABOOT
+│   ├── Partition ID: 5
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: aboot.mbn
+│   └── Empty Delta Name
+├── Entry #5
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 14464
+│   ├── Block Count: 1024
+│   ├── Partition Name: RPM
+│   ├── Partition ID: 6
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: rpm.mbn
+│   └── Empty Delta Name
+├── Entry #6
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 15488
+│   ├── Block Count: 4096
+│   ├── Partition Name: TZ
+│   ├── Partition ID: 7
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: tz.mbn
+│   └── Empty Delta Name
+├── Entry #7
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 19584
+│   ├── Block Count: 1024
+│   ├── Partition Name: HYP
+│   ├── Partition ID: 8
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: hyp.mbn
+│   └── Empty Delta Name
+├── Entry #8
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 20608
+│   ├── Block Count: 512
+│   ├── Partition Name: DEVCFG
+│   ├── Partition ID: 9
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: devcfg.mbn
+│   └── Empty Delta Name
+├── Entry #9
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 21120
+│   ├── Block Count: 6144
+│   ├── Partition Name: FSG
+│   ├── Partition ID: 10
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: 
+│   └── Empty Delta Name
+├── Entry #10
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 27264
+│   ├── Block Count: 32
+│   ├── Partition Name: SEC
+│   ├── Partition ID: 11
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: sec.dat
+│   └── Empty Delta Name
+├── Entry #11
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 27296
+│   ├── Block Count: 1024
+│   ├── Partition Name: KEYMASTER
+│   ├── Partition ID: 12
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: keymaster.mbn
+│   └── Empty Delta Name
+├── Entry #12
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 28320
+│   ├── Block Count: 512
+│   ├── Partition Name: CMNLIB
+│   ├── Partition ID: 13
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: cmnlib.mbn
+│   └── Empty Delta Name
+├── Entry #13
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 28832
+│   ├── Block Count: 512
+│   ├── Partition Name: CMNLIB64
+│   ├── Partition ID: 14
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: cmnlib64.mbn
+│   └── Empty Delta Name
+├── Entry #14
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 29344
+│   ├── Block Count: 1024
+│   ├── Partition Name: LKSECAPP
+│   ├── Partition ID: 15
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: lksecapp.mbn
+│   └── Empty Delta Name
+├── Entry #15
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 30368
+│   ├── Block Count: 512
+│   ├── Partition Name: APDP
+│   ├── Partition ID: 16
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: apdp.mbn
+│   └── Empty Delta Name
+├── Entry #16
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 30880
+│   ├── Block Count: 512
+│   ├── Partition Name: MSADP
+│   ├── Partition ID: 17
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: msadp.mbn
+│   └── Empty Delta Name
+├── Entry #17
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 31392
+│   ├── Block Count: 1376
+│   ├── Partition Name: PAD
+│   ├── Partition ID: 18
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: 
+│   └── Empty Delta Name
+├── Entry #18
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 32768
+│   ├── Block Count: 6144
+│   ├── Partition Name: MODEMST1
+│   ├── Partition ID: 19
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: nvrebuild1.bin
+│   └── Empty Delta Name
+├── Entry #19
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 38912
+│   ├── Block Count: 6144
+│   ├── Partition Name: MODEMST2
+│   ├── Partition ID: 20
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: nvrebuild2.bin
+│   └── Empty Delta Name
+├── Entry #20
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 45056
+│   ├── Block Count: 20480
+│   ├── Partition Name: PARAM
+│   ├── Partition ID: 21
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: param.bin
+│   └── Empty Delta Name
+├── Entry #21
+│   ├── Filesystem: EXT4 (5)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 65536
+│   ├── Block Count: 28672
+│   ├── Partition Name: EFS
+│   ├── Partition ID: 22
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: efs.img.ext4
+│   └── Empty Delta Name
+├── Entry #22
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 94208
+│   ├── Block Count: 65536
+│   ├── Partition Name: BOOT
+│   ├── Partition ID: 23
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: boot.img
+│   └── Empty Delta Name
+├── Entry #23
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 159744
+│   ├── Block Count: 65536
+│   ├── Partition Name: RECOVERY
+│   ├── Partition ID: 24
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: recovery.img
+│   └── Empty Delta Name
+├── Entry #24
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 225280
+│   ├── Block Count: 14336
+│   ├── Partition Name: BOTA
+│   ├── Partition ID: 25
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: 
+│   └── Empty Delta Name
+├── Entry #25
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 239616
+│   ├── Block Count: 10242
+│   ├── Partition Name: FOTA
+│   ├── Partition ID: 26
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: 
+│   └── Empty Delta Name
+├── Entry #26
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 249858
+│   ├── Block Count: 12278
+│   ├── Partition Name: BACKUP
+│   ├── Partition ID: 27
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: 
+│   └── Empty Delta Name
+├── Entry #27
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 262136
+│   ├── Block Count: 6144
+│   ├── Partition Name: FSC
+│   ├── Partition ID: 28
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: 
+│   └── Empty Delta Name
+├── Entry #28
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 268280
+│   ├── Block Count: 16
+│   ├── Partition Name: SSD
+│   ├── Partition ID: 29
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: 
+│   └── Empty Delta Name
+├── Entry #29
+│   ├── Filesystem: EXT4 (5)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 268296
+│   ├── Block Count: 65536
+│   ├── Partition Name: PERSIST
+│   ├── Partition ID: 30
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: persist.img.ext4
+│   └── Empty Delta Name
+├── Entry #30
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 333832
+│   ├── Block Count: 1024
+│   ├── Partition Name: PERSISTENT
+│   ├── Partition ID: 31
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: 
+│   └── Empty Delta Name
+├── Entry #31
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 334856
+│   ├── Block Count: 8192
+│   ├── Partition Name: STEADY
+│   ├── Partition ID: 32
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: steady.bin
+│   └── Empty Delta Name
+├── Entry #32
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 343048
+│   ├── Block Count: 1024
+│   ├── Partition Name: KEYSTORE
+│   ├── Partition ID: 33
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: 
+│   └── Empty Delta Name
+├── Entry #33
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 344072
+│   ├── Block Count: 64
+│   ├── Partition Name: CONFIG
+│   ├── Partition ID: 34
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: 
+│   └── Empty Delta Name
+├── Entry #34
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 344136
+│   ├── Block Count: 1024
+│   ├── Partition Name: MOTA
+│   ├── Partition ID: 35
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: 
+│   └── Empty Delta Name
+├── Entry #35
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 345160
+│   ├── Block Count: 512
+│   ├── Partition Name: DPO
+│   ├── Partition ID: 36
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: 
+│   └── Empty Delta Name
+├── Entry #36
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 345672
+│   ├── Block Count: 128
+│   ├── Partition Name: MDTP
+│   ├── Partition ID: 37
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: 
+│   └── Empty Delta Name
+├── Entry #37
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 345800
+│   ├── Block Count: 2048
+│   ├── Partition Name: DIP
+│   ├── Partition ID: 38
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: 
+│   └── Empty Delta Name
+├── Entry #38
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 347848
+│   ├── Block Count: 128
+│   ├── Partition Name: OEM
+│   ├── Partition ID: 39
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: 
+│   └── Empty Delta Name
+├── Entry #39
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 347976
+│   ├── Block Count: 8192
+│   ├── Partition Name: MCFG
+│   ├── Partition ID: 40
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: 
+│   └── Empty Delta Name
+├── Entry #40
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 356168
+│   ├── Block Count: 32768
+│   ├── Partition Name: DSP
+│   ├── Partition ID: 41
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: adspso.bin
+│   └── Empty Delta Name
+├── Entry #41
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 388936
+│   ├── Block Count: 187576
+│   ├── Partition Name: MODEM
+│   ├── Partition ID: 42
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: modem.bin
+│   └── Empty Delta Name
+├── Entry #42
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 576512
+│   ├── Block Count: 57344
+│   ├── Partition Name: APNHLOS
+│   ├── Partition ID: 43
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: NON-HLOS.bin
+│   └── Empty Delta Name
+├── Entry #43
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 633856
+│   ├── Block Count: 5120
+│   ├── Partition Name: RESERVED2
+│   ├── Partition ID: 44
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: -
+│   └── Empty Delta Name
+├── Entry #44
+│   ├── Filesystem: EXT4 (5)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 638976
+│   ├── Block Count: 6864896
+│   ├── Partition Name: SYSTEM
+│   ├── Partition ID: 45
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: system.img.ext4
+│   └── Empty Delta Name
+├── Entry #45
+│   ├── Filesystem: EXT4 (5)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 7503872
+│   ├── Block Count: 409600
+│   ├── Partition Name: CACHE
+│   ├── Partition ID: 46
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: cache.img.ext4
+│   └── Empty Delta Name
+├── Entry #46
+│   ├── Filesystem: EXT4 (5)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 7913472
+│   ├── Block Count: 122880
+│   ├── Partition Name: HIDDEN
+│   ├── Partition ID: 47
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: hidden.img.ext4
+│   └── Empty Delta Name
+├── Entry #47
+│   ├── Filesystem: EXT4 (5)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 8036352
+│   ├── Block Count: 0
+│   ├── Partition Name: USERDATA
+│   ├── Partition ID: 48
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: userdata.img.ext4
+│   └── Delta Name: remained
+├── Entry #48
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 0
+│   ├── Block Count: 34
+│   ├── Partition Name: PGPT
+│   ├── Partition ID: 70
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: pgpt.img
+│   └── Empty Delta Name
+├── Entry #49
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 34
+│   ├── Block Count: 16
+│   ├── Partition Name: PIT
+│   ├── Partition ID: 71
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: MSM8952.pit
+│   └── Empty Delta Name
+├── Entry #50
+│   ├── Filesystem: Basic (1)
+│   ├── Partition Type: Data (5)
+│   ├── Binary Type: Phone / AP (0)
+│   ├── Device Type: EMMC (2)
+│   ├── Start Block: 50
+│   ├── Block Count: 32
+│   ├── Partition Name: MD5
+│   ├── Partition ID: 72
+│   ├── File Offset: 0
+│   ├── File Size: 0
+│   ├── File Name: md5.img
+│   └── Empty Delta Name
+└── Entry #51
+    ├── Filesystem: Basic (1)
+    ├── Partition Type: Data (5)
+    ├── Binary Type: Phone / AP (0)
+    ├── Device Type: EMMC (2)
+    ├── Start Block: 30777310
+    ├── Block Count: 33
+    ├── Partition Name: SGPT
+    ├── Partition ID: 73
+    ├── File Offset: 0
+    ├── File Size: 0
+    ├── File Name: sgpt.img
+    └── Empty Delta Name
