@@ -1,0 +1,17 @@
+[package]
+name = "thor-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Thor: a flash utility for Samsung devices (Rust port). Read-only commands for Milestone 1."
+
+[[bin]]
+name = "thor"
+path = "src/main.rs"
+
+[dependencies]
+thor-core = { path = "../thor-core" }
+
+[lints]
+workspace = true

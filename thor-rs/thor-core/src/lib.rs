@@ -8,6 +8,7 @@
 //! Ported from the original C# (`TheAirBlow.Thor.Library`). See `../../docs/` for the
 //! module-by-module documentation this port is built against.
 
+pub mod backend;
 pub mod flash;
 pub mod odin;
 pub mod pit;

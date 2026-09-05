@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["thor-core"]
+members = ["thor-core", "thor-cli"]
 
 [workspace.package]
 version = "0.1.0"
