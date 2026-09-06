@@ -27,6 +27,7 @@ support, a testable engine, and a scriptable CLI.
 | `thor set-region <XAA> --execute [--yes]` | Set the CSC region code — **unverified** (shares an opcode with T-Flash in the original; may enable T-Flash instead). Type `YES` to confirm |
 | `thor flash-pit <file.pit> --execute [--yes]` | **Repartition** the device from a PIT (validated first). The most brick-prone command — type `FLASHPIT` to confirm |
 | `thor upload-probe` · `thor upload-dump <start> <end> <out>` · `thor upload-reboot` | **Upload mode (SUC):** list RAM regions and **dump memory** from a device in upload/ramdump mode — read-only. A RAM dump is a superset of "get the kernel log over USB" |
+| `thor dmesg-carve <dumpfile>` · `thor upload-dmesg <start> <end>` | **Carve the kernel `printk` log** out of a RAM dump — offline from a file, or dump-and-carve live. The "USB → printk" payoff |
 | `thor reboot [normal\|download]` · `thor end` | Reboot / shut down the device |
 | `thor shell` | **Interactive session** — connect once, run many commands. Real line editing: Tab-completion, ↑/↓ history (saved to `~/.thor_history`), Ctrl-A/E/U/K/W, Ctrl-R search, Ctrl-C/Ctrl-D |
 
@@ -43,7 +44,7 @@ Windows/macOS but hasn't been verified there yet).
 ```sh
 cd thor-rs
 cargo build --release          # binary at target/release/thor  (~788 KB)
-cargo test                     # 89 tests, no device required
+cargo test                     # 96 tests, no device required
 ./target/release/thor list
 ```
 

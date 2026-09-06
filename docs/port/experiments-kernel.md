@@ -59,7 +59,17 @@ loop), and `power_down`. CLI: `thor upload-probe`, `thor upload-dump <start> <en
 `thor upload-reboot` — all **read-only** (dumping RAM writes nothing to the device). The one
 part still needing a hardware capture to confirm is the exact address framing on the wire
 (fixed-width ASCII hex is our reading of `samupload.py`); it's marked as such in the code.
-Still to do: a `dmesg`/`__log_buf` carver that pulls the `printk` ring buffer out of a dump.
+
+### ✅ Built (2026-09-06) — `thor-core::dmesg` (the carver)
+
+The payoff: `thor-core::dmesg` carves the kernel `printk` log out of a RAM dump (TDD, 7 tests).
+`parse_printk_records` walks the structured `struct printk_log` records (Linux 3.5–5.9 — right
+for the ~3.18 kernels on the target devices), and `carve_dmesg` scans a dump byte-by-byte for
+the log buffer (a cheap plausibility check keeps it O(n); found at any offset, not just aligned
+ones). CLI: `thor dmesg-carve <dumpfile>` (offline, pairs with `upload-dump`) and
+`thor upload-dmesg <start> <end>` (dump + carve live). Demonstrated end to end on a synthetic
+dump → real `dmesg`-style output. **Not** handled yet: the Linux 5.10+ lockless
+`printk_ringbuffer`, and the syslog level bit is best-effort (the text and timestamp are exact).
 
 ## 2. UART jig — real serial console from a resistor on the USB ID pin
 

@@ -52,7 +52,9 @@ fn main() -> ExitCode {
         Some("flash-pit") => cmd_flash_pit(&args[2..]),
         Some("upload-probe") => cmd_upload_probe(),
         Some("upload-dump") => cmd_upload_dump(&args[2..]),
+        Some("upload-dmesg") => cmd_upload_dmesg(&args[2..]),
         Some("upload-reboot") => cmd_upload_reboot(),
+        Some("dmesg-carve") => cmd_dmesg_carve(args.get(2)),
         Some("reboot") => cmd_reboot(args.get(2)),
         Some("end") => cmd_end(),
         Some("shell") => cmd_shell(),
@@ -90,6 +92,8 @@ fn print_usage() {
          \x20 thor flash-pit <file.pit> --execute [--yes]   Repartition the device (VERY destructive)\n\
          \x20 thor upload-probe          List RAM regions of a device in upload mode (read-only)\n\
          \x20 thor upload-dump <start> <end> <out>   Dump a memory range over upload mode\n\
+         \x20 thor upload-dmesg <start> <end>   Dump a range and carve the kernel log from it\n\
+         \x20 thor dmesg-carve <dumpfile>   Carve the kernel log from an existing RAM dump\n\
          \x20 thor upload-reboot         Reboot a device out of upload mode\n\
          \x20 thor reboot [normal|download]   Reboot the device (default normal)\n\
          \x20 thor end                  Shut the device down / end the session\n\
@@ -1334,6 +1338,57 @@ fn cmd_upload_reboot() -> Result<(), Box<dyn Error>> {
     up.power_down()?;
     println!("Rebooting out of upload mode.");
     Ok(())
+}
+
+/// Print carved kernel-log lines, or a clear error if none were found.
+fn print_carved(recs: &[thor_core::dmesg::LogRecord]) -> Result<(), Box<dyn Error>> {
+    if recs.is_empty() {
+        return Err(
+            "no kernel log found — wrong memory range, or a Linux 5.10+ ringbuffer \
+                    (not parsed yet)"
+                .into(),
+        );
+    }
+    println!("Carved {} kernel-log line(s):\n", recs.len());
+    for r in recs {
+        println!("{}", r.format_line());
+    }
+    Ok(())
+}
+
+/// Dump a memory range from a device in upload mode and carve the kernel log out of it in one
+/// step. **Read-only.**
+fn cmd_upload_dmesg(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let usage = "usage: thor upload-dmesg <start> <end>  (addresses in hex)";
+    let start = parse_hex(args.first().ok_or(usage)?)?;
+    let end = parse_hex(args.get(1).ok_or(usage)?)?;
+    if end <= start {
+        return Err("end address must be greater than start".into());
+    }
+    let mut up = open_upload()?;
+    let mut mem: Vec<u8> = Vec::with_capacity((end - start) as usize);
+    println!(
+        "Dumping {} from {start:#x}..{end:#x} to carve the kernel log…",
+        progress::human_bytes((end - start) as i64)
+    );
+    up.dump_range(
+        start,
+        end,
+        &mut |chunk| {
+            mem.extend_from_slice(chunk);
+            Ok(())
+        },
+        &mut |_, _| {},
+    )?;
+    print_carved(&thor_core::dmesg::carve_dmesg(&mem))
+}
+
+/// Carve the kernel log from an existing RAM dump file (offline — no device). Pair with
+/// `upload-dump`.
+fn cmd_dmesg_carve(path: Option<&String>) -> Result<(), Box<dyn Error>> {
+    let path = path.ok_or("usage: thor dmesg-carve <dumpfile>")?;
+    let dump = std::fs::read(path)?;
+    print_carved(&thor_core::dmesg::carve_dmesg(&dump))
 }
 
 /// Open `file` as a flash source, returning the reader and the number of bytes that will

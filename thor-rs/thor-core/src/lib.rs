@@ -10,6 +10,7 @@
 
 pub mod archive;
 pub mod backend;
+pub mod dmesg;
 pub mod flash;
 pub mod odin;
 pub mod pit;
