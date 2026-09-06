@@ -1340,20 +1340,32 @@ fn cmd_upload_reboot() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// Print carved kernel-log lines, or a clear error if none were found.
-fn print_carved(recs: &[thor_core::dmesg::LogRecord]) -> Result<(), Box<dyn Error>> {
-    if recs.is_empty() {
-        return Err(
-            "no kernel log found — wrong memory range, or a Linux 5.10+ ringbuffer \
-                    (not parsed yet)"
-                .into(),
+/// Carve the kernel log from `dump` and print it: the structured `printk_log` records first
+/// (with timestamps), then the 5.10+ ringbuffer text fallback, else a clear error.
+fn carve_and_print(dump: &[u8]) -> Result<(), Box<dyn Error>> {
+    let recs = thor_core::dmesg::carve_dmesg(dump);
+    if !recs.is_empty() {
+        println!(
+            "Carved {} kernel-log line(s) (structured printk_log):\n",
+            recs.len()
         );
+        for r in &recs {
+            println!("{}", r.format_line());
+        }
+        return Ok(());
     }
-    println!("Carved {} kernel-log line(s):\n", recs.len());
-    for r in recs {
-        println!("{}", r.format_line());
+    let lines = thor_core::dmesg::carve_ringbuffer(dump);
+    if !lines.is_empty() {
+        println!(
+            "Carved {} kernel-log line(s) (5.10+ ringbuffer — text only, no timestamps):\n",
+            lines.len()
+        );
+        for l in &lines {
+            println!("{l}");
+        }
+        return Ok(());
     }
-    Ok(())
+    Err("no kernel log found — wrong memory range, or a format we don't recognize".into())
 }
 
 /// Dump a memory range from a device in upload mode and carve the kernel log out of it in one
@@ -1380,7 +1392,7 @@ fn cmd_upload_dmesg(args: &[String]) -> Result<(), Box<dyn Error>> {
         },
         &mut |_, _| {},
     )?;
-    print_carved(&thor_core::dmesg::carve_dmesg(&mem))
+    carve_and_print(&mem)
 }
 
 /// Carve the kernel log from an existing RAM dump file (offline — no device). Pair with
@@ -1388,7 +1400,7 @@ fn cmd_upload_dmesg(args: &[String]) -> Result<(), Box<dyn Error>> {
 fn cmd_dmesg_carve(path: Option<&String>) -> Result<(), Box<dyn Error>> {
     let path = path.ok_or("usage: thor dmesg-carve <dumpfile>")?;
     let dump = std::fs::read(path)?;
-    print_carved(&thor_core::dmesg::carve_dmesg(&dump))
+    carve_and_print(&dump)
 }
 
 /// Open `file` as a flash source, returning the reader and the number of bytes that will

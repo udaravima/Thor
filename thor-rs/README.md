@@ -44,7 +44,7 @@ Windows/macOS but hasn't been verified there yet).
 ```sh
 cd thor-rs
 cargo build --release          # binary at target/release/thor  (~788 KB)
-cargo test                     # 96 tests, no device required
+cargo test                     # 98 tests, no device required
 ./target/release/thor list
 ```
 

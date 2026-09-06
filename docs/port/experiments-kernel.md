@@ -68,8 +68,12 @@ for the ~3.18 kernels on the target devices), and `carve_dmesg` scans a dump byt
 the log buffer (a cheap plausibility check keeps it O(n); found at any offset, not just aligned
 ones). CLI: `thor dmesg-carve <dumpfile>` (offline, pairs with `upload-dump`) and
 `thor upload-dmesg <start> <end>` (dump + carve live). Demonstrated end to end on a synthetic
-dump → real `dmesg`-style output. **Not** handled yet: the Linux 5.10+ lockless
-`printk_ringbuffer`, and the syslog level bit is best-effort (the text and timestamp are exact).
+dump → real `dmesg`-style output. For the Linux **5.10+ lockless `printk_ringbuffer`**,
+`carve_ringbuffer` recovers the log **text** (no timestamps) as a fallback — the 5.10 format
+keeps text in `[unsigned long id][text]` data blocks but holds length/timestamp in a separate
+descriptor+info array that isn't reliably locatable without kernel symbols, so a byte-exact
+timestamped 5.10 carve remains a TODO needing a real dump. The syslog level bit is best-effort
+throughout (text and, for the structured format, timestamp are exact).
 
 ## 2. UART jig — real serial console from a resistor on the USB ID pin
 

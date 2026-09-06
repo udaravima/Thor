@@ -17,7 +17,8 @@
 //! ```
 //!
 //! A record with `len == 0` marks the ring wrap / end. The newest kernels (5.10+) use a
-//! different lockless `printk_ringbuffer`, which is **not** handled here yet.
+//! different lockless `printk_ringbuffer`; [`carve_ringbuffer`] recovers its log *text*
+//! (without timestamps) as a best-effort fallback.
 
 /// Fixed size of a `printk_log` record header.
 const HEADER: usize = 16;
@@ -107,6 +108,64 @@ pub fn carve_dmesg(dump: &[u8]) -> Vec<LogRecord> {
     } else {
         Vec::new()
     }
+}
+
+/// Best-effort recovery of kernel-log **text** from a Linux 5.10+ `printk_ringbuffer` data
+/// ring — the fallback for when [`carve_dmesg`]'s structured parse finds nothing.
+///
+/// The 5.10 format stores each record's text in a data block `[unsigned long id][text]`, but
+/// the length, timestamp and level live in a *separate* descriptor + info array that can't be
+/// reliably located in a raw dump without kernel symbols. So this returns the text lines only
+/// (no timestamps): it finds data-block headers — a small `id` (high 32 bits zero) followed by
+/// printable text — and takes the text between consecutive blocks. Heuristic; the byte-exact
+/// structured/timestamped 5.10 carve remains a TODO that needs a real dump to validate against.
+pub fn carve_ringbuffer(dump: &[u8]) -> Vec<String> {
+    const MIN_TEXT: usize = 3;
+    // Pass 1: locate data-block headers — an id whose high 32 bits are zero, then printable
+    // text. (A run of text never contains the 4 zero bytes an id's high half does.)
+    let mut headers: Vec<usize> = Vec::new();
+    let mut pos = 0;
+    while pos + 8 < dump.len() {
+        if dump[pos + 4] == 0
+            && dump[pos + 5] == 0
+            && dump[pos + 6] == 0
+            && dump[pos + 7] == 0
+            && is_text_byte(dump[pos + 8])
+        {
+            let run = dump[pos + 8..]
+                .iter()
+                .take_while(|&&b| is_text_byte(b))
+                .count();
+            if run >= MIN_TEXT {
+                headers.push(pos);
+                pos += 8 + run;
+                continue;
+            }
+        }
+        pos += 1;
+    }
+
+    // Pass 2: the text of each block runs from just after its id up to the next block header
+    // (trailing alignment padding trimmed by stopping at the first non-text byte).
+    let mut out = Vec::new();
+    for i in 0..headers.len() {
+        let start = headers[i] + 8;
+        let end = headers.get(i + 1).copied().unwrap_or(dump.len());
+        let raw = &dump[start..end];
+        let text_len = raw.iter().take_while(|&&b| is_text_byte(b)).count();
+        for line in String::from_utf8_lossy(&raw[..text_len]).split('\n') {
+            let line = line.trim_end();
+            if !line.is_empty() {
+                out.push(line.to_string());
+            }
+        }
+    }
+    out
+}
+
+/// Whether `b` is a byte we treat as log text (printable ASCII, tab or newline).
+fn is_text_byte(b: u8) -> bool {
+    b == b'\n' || b == b'\t' || (0x20..=0x7e).contains(&b)
 }
 
 /// Cheap check that `buf` starts with a plausible `printk_log` record: sane lengths and mostly
@@ -222,6 +281,37 @@ mod tests {
     #[test]
     fn carve_returns_empty_for_pure_junk() {
         assert!(carve_dmesg(&[0x55u8; 4096]).is_empty());
+    }
+
+    /// Build one 5.10 data block: `[u64 id][text]`, padded to 8.
+    fn data_block(id: u64, text: &str) -> Vec<u8> {
+        let padded = (8 + text.len()).div_ceil(8) * 8;
+        let mut b = vec![0u8; padded];
+        b[0..8].copy_from_slice(&id.to_le_bytes());
+        b[8..8 + text.len()].copy_from_slice(text.as_bytes());
+        b
+    }
+
+    #[test]
+    fn carve_ringbuffer_recovers_text_lines() {
+        let mut dump = vec![0u8; 64]; // leading zeros
+        dump.extend(data_block(1, "ring: first line"));
+        dump.extend(data_block(2, "ring: second line"));
+        dump.extend(data_block(300, "ring: third line with number 42"));
+        dump.extend(vec![0xFFu8; 32]); // trailing junk
+
+        let lines = carve_ringbuffer(&dump);
+        assert!(lines.iter().any(|l| l == "ring: first line"), "{lines:?}");
+        assert!(lines.iter().any(|l| l == "ring: second line"), "{lines:?}");
+        assert!(
+            lines.iter().any(|l| l == "ring: third line with number 42"),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
+    fn carve_ringbuffer_empty_for_junk() {
+        assert!(carve_ringbuffer(&[0xFFu8; 2048]).is_empty());
     }
 
     #[test]
