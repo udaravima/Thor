@@ -28,6 +28,7 @@ use thor_core::backend::{self, NusbTransport};
 use thor_core::flash::{plan_flash, FlashParams};
 use thor_core::odin::{FlashState, Odin};
 use thor_core::pit::{FieldMapper, PitData, PitEntry};
+use thor_core::transport::Transport;
 use thor_core::upload::{Upload, UploadError};
 
 fn main() -> ExitCode {
@@ -95,6 +96,10 @@ const SHELL_COMMANDS: &[&str] = &[
     "print-pit",
     "dump-pit",
     "flash-plan",
+    "flash",
+    "factory-reset",
+    "erase",
+    "set-region",
     "tar-list",
     "reboot",
     "end",
@@ -143,6 +148,10 @@ fn cmd_shell() -> Result<(), Box<dyn Error>> {
                     "pit" | "print-pit" => report(shell_print_pit(&mut odin)),
                     "dump-pit" => report(shell_dump_pit(&mut odin, cmd_args)),
                     "flash-plan" => report(shell_flash_plan(&mut odin, cmd_args)),
+                    "flash" => report(shell_flash(&mut odin, cmd_args)),
+                    "factory-reset" => report(shell_factory_reset(&mut odin)),
+                    "erase" => report(shell_erase(&mut odin, cmd_args)),
+                    "set-region" => report(shell_set_region(&mut odin, cmd_args)),
                     "tar-list" => report(shell_tar_list(cmd_args)),
                     "reboot" => match cmd_args.first().copied() {
                         None | Some("normal") => break ShellExit::Finish(Finish::RebootNormal),
@@ -246,6 +255,10 @@ fn print_shell_help() {
         "  pit | print-pit                dump & print the partition table\n\
          \x20 dump-pit <file>                dump the PIT to a file\n\
          \x20 flash-plan <file> [partition]  dry-run a flash (no writes)\n\
+         \x20 flash <file> [partition]       flash an image or .tar (typed confirmation)\n\
+         \x20 factory-reset                  wipe /data (type ERASE)\n\
+         \x20 erase <partition> --size <n>   zero-fill a partition (type the name)\n\
+         \x20 set-region <XAA>               set the CSC region code (UNVERIFIED)\n\
          \x20 tar-list <archive>             list an Odin .tar/.tar.md5\n\
          \x20 reboot [normal|download]       reboot the device and exit\n\
          \x20 end                            shut the device down and exit\n\
@@ -270,13 +283,72 @@ fn shell_dump_pit(odin: &mut Odin<NusbTransport>, args: &[&str]) -> Result<(), B
 fn shell_flash_plan(odin: &mut Odin<NusbTransport>, args: &[&str]) -> Result<(), Box<dyn Error>> {
     let file = *args.first().ok_or("usage: flash-plan <file> [partition]")?;
     let partition = args.get(1).copied();
-    let base = std::path::Path::new(file)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or(file);
+    let base = basename(file);
     let pit = PitData::parse(&odin.dump_pit()?)?;
     let params = odin.params().ok_or("session has no flash params")?;
     do_flash_plan(file, base, partition, &pit, &params)
+}
+
+/// Live flash from inside the shell (single image or archive), reusing the open session.
+fn shell_flash(odin: &mut Odin<NusbTransport>, args: &[&str]) -> Result<(), Box<dyn Error>> {
+    let file = *args.first().ok_or("usage: flash <file> [partition]")?;
+    let partition = args.get(1).copied();
+    let base = basename(file);
+    let pit = PitData::parse(&odin.dump_pit()?)?;
+    let params = odin.params().ok_or("session has no flash params")?;
+    flash_live(odin, &pit, &params, file, base, partition, false)?;
+    Ok(())
+}
+
+/// Factory reset from inside the shell.
+fn shell_factory_reset(odin: &mut Odin<NusbTransport>) -> Result<(), Box<dyn Error>> {
+    factory_reset_core(odin, false)?;
+    Ok(())
+}
+
+/// Zero-fill a partition from inside the shell: `erase <partition> --size <bytes>`.
+fn shell_erase(odin: &mut Odin<NusbTransport>, args: &[&str]) -> Result<(), Box<dyn Error>> {
+    let mut partition: Option<&str> = None;
+    let mut size: Option<i64> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i] {
+            "--size" => {
+                size = Some(
+                    args.get(i + 1)
+                        .ok_or("--size needs a byte count")?
+                        .parse()
+                        .map_err(|_| "invalid --size (want a byte count)")?,
+                );
+                i += 2;
+            }
+            other => {
+                if partition.is_none() {
+                    partition = Some(other);
+                }
+                i += 1;
+            }
+        }
+    }
+    let partition = partition.ok_or("usage: erase <partition> --size <bytes>")?;
+    let size = size.ok_or("erase needs --size <bytes> (the number of zero bytes to write)")?;
+    if size <= 0 {
+        return Err("--size must be positive".into());
+    }
+    let pit = PitData::parse(&odin.dump_pit()?)?;
+    let params = odin.params().ok_or("session has no flash params")?;
+    erase_core(odin, &pit, &params, partition, size, false)?;
+    Ok(())
+}
+
+/// Set the region code from inside the shell: `set-region <XAA>`.
+fn shell_set_region(odin: &mut Odin<NusbTransport>, args: &[&str]) -> Result<(), Box<dyn Error>> {
+    let code = *args.first().ok_or("usage: set-region <XAA>")?;
+    if code.len() != 3 {
+        return Err("a region code is exactly 3 characters (e.g. XAA)".into());
+    }
+    set_region_core(odin, &code.to_ascii_uppercase(), false)?;
+    Ok(())
 }
 
 fn shell_tar_list(args: &[&str]) -> Result<(), Box<dyn Error>> {
@@ -621,6 +693,23 @@ fn do_flash_live(
         odin.enable_tflash()?;
     }
 
+    let flashed = flash_live(&mut odin, &pit, &params, file, base, partition, assume_yes)?;
+    // Only run the requested reboot/shutdown if we actually flashed; on an abort, leave it be.
+    finish_session(odin, if flashed { finish } else { Finish::Leave })
+}
+
+/// Flash `file` to the connected device over the borrowed session `odin` — a single image or
+/// a whole archive. Returns `true` if it flashed, `false` if the user aborted at the prompt.
+/// Session-borrowing so both the one-shot CLI and the interactive shell can drive it.
+fn flash_live<T: Transport>(
+    odin: &mut Odin<T>,
+    pit: &PitData,
+    params: &FlashParams,
+    file: &str,
+    base: &str,
+    partition: Option<&str>,
+    assume_yes: bool,
+) -> Result<bool, Box<dyn Error>> {
     if base.ends_with(".tar") || base.ends_with(".tar.md5") {
         if partition.is_some() {
             return Err(
@@ -629,11 +718,23 @@ fn do_flash_live(
                     .into(),
             );
         }
-        return flash_archive_live(file, odin, &pit, &params, finish, assume_yes);
+        return flash_live_archive(odin, pit, params, file, assume_yes);
     }
+    flash_live_single(odin, pit, params, file, base, partition, assume_yes)
+}
 
-    let entry = match_partition(&pit, base, partition)
-        .ok_or_else(|| available_partitions_err(&pit))?
+/// Flash a single image to its partition over the borrowed session.
+fn flash_live_single<T: Transport>(
+    odin: &mut Odin<T>,
+    pit: &PitData,
+    params: &FlashParams,
+    file: &str,
+    base: &str,
+    partition: Option<&str>,
+    assume_yes: bool,
+) -> Result<bool, Box<dyn Error>> {
+    let entry = match_partition(pit, base, partition)
+        .ok_or_else(|| available_partitions_err(pit))?
         .clone();
     let (mut source, length) = open_flash_source(file, base)?;
 
@@ -642,11 +743,11 @@ fn do_flash_live(
         "{} (id {}, binaryType {}, deviceType {})",
         entry.partition, entry.partition_id, entry.binary_type, entry.device_type
     );
-    print_partition_plan(&target, length, &params);
+    print_partition_plan(&target, length, params);
 
     if !confirm_flash(&entry.partition, assume_yes)? {
         println!("Aborted — nothing was written.");
-        return finish_session(odin, Finish::Leave);
+        return Ok(false);
     }
 
     println!("\nFlashing {}…", entry.partition);
@@ -676,21 +777,19 @@ fn do_flash_live(
         entry.partition,
         progress::human_bytes(length)
     );
-
-    finish_session(odin, finish)
+    Ok(true)
 }
 
-/// **Destructive.** Flash every image in an Odin `.tar` / `.tar.md5` that matches a PIT
-/// partition, in one session. Two passes: first resolve every image's on-device size (so the
-/// total is announced up front), then stream each matched image to its partition.
-fn flash_archive_live(
-    file: &str,
-    mut odin: Odin<NusbTransport>,
+/// Flash every image in an Odin `.tar` / `.tar.md5` that matches a PIT partition, over the
+/// borrowed session. Two passes: resolve every image's on-device size (so the total is
+/// announced up front), then stream each matched image to its partition.
+fn flash_live_archive<T: Transport>(
+    odin: &mut Odin<T>,
     pit: &PitData,
     params: &FlashParams,
-    finish: Finish,
+    file: &str,
     assume_yes: bool,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<bool, Box<dyn Error>> {
     // Pass 1: match each image to a partition and sum the real (on-device) sizes.
     let images = list_archive_images(std::fs::File::open(file)?)?;
     let mut targets: Vec<(String, PitEntry, i64)> = Vec::new();
@@ -730,7 +829,7 @@ fn flash_archive_live(
 
     if !confirm_flash_archive(any_critical, assume_yes)? {
         println!("Aborted — nothing was written.");
-        return finish_session(odin, Finish::Leave);
+        return Ok(false);
     }
 
     odin.set_total_bytes(total)?;
@@ -780,7 +879,7 @@ fn flash_archive_live(
         targets.len(),
         progress::human_bytes(total)
     );
-    finish_session(odin, finish)
+    Ok(true)
 }
 
 /// Confirm a whole-archive flash. Typing each partition name is impractical for many images,
@@ -859,17 +958,34 @@ fn cmd_factory_reset(args: &[String]) -> Result<(), Box<dyn Error>> {
         );
     }
     let mut odin = open_session()?;
+    let did = factory_reset_core(&mut odin, a.assume_yes)?;
+    finish_session(
+        odin,
+        if did {
+            parse_finish(a.finish)?
+        } else {
+            Finish::Leave
+        },
+    )
+}
+
+/// Factory-reset over the borrowed session (confirm `ERASE`, then wipe userdata). Returns
+/// `true` if it erased, `false` on abort. Shared by the CLI and the shell.
+fn factory_reset_core<T: Transport>(
+    odin: &mut Odin<T>,
+    assume_yes: bool,
+) -> Result<bool, Box<dyn Error>> {
     println!("\nAbout to FACTORY RESET — this wipes the /data (userdata) partition.");
     let warn = "on a device with an unlocked bootloader this can trip Samsung's VaultKeeper, \
                 which re-locks the bootloader after /data is wiped until you finish setup online.";
-    if !confirm_typed("ERASE", Some(warn), a.assume_yes)? {
+    if !confirm_typed("ERASE", Some(warn), assume_yes)? {
         println!("Aborted — nothing was erased.");
-        return finish_session(odin, Finish::Leave);
+        return Ok(false);
     }
     println!("\nErasing userdata (this can take a few minutes)…");
     odin.erase_user_data()?;
     println!("Factory reset complete.");
-    finish_session(odin, parse_finish(a.finish)?)
+    Ok(true)
 }
 
 /// **Destructive.** Zero-fill a partition — the C#'s "erase partition", built on the flash
@@ -927,19 +1043,40 @@ fn cmd_erase(args: &[String]) -> Result<(), Box<dyn Error>> {
     let mut odin = open_session()?;
     let pit = PitData::parse(&odin.dump_pit()?)?;
     let params = odin.params().ok_or("session has no flash params")?;
-    let entry = match_partition(&pit, partition, Some(partition))
-        .ok_or_else(|| available_partitions_err(&pit))?
+    let did = erase_core(&mut odin, &pit, &params, partition, size, assume_yes)?;
+    finish_session(
+        odin,
+        if did {
+            parse_finish(finish_flag)?
+        } else {
+            Finish::Leave
+        },
+    )
+}
+
+/// Zero-fill a partition over the borrowed session. Returns `true` if it wrote, `false` on
+/// abort. Shared by the CLI and the shell.
+fn erase_core<T: Transport>(
+    odin: &mut Odin<T>,
+    pit: &PitData,
+    params: &FlashParams,
+    partition: &str,
+    size: i64,
+    assume_yes: bool,
+) -> Result<bool, Box<dyn Error>> {
+    let entry = match_partition(pit, partition, Some(partition))
+        .ok_or_else(|| available_partitions_err(pit))?
         .clone();
 
     println!("\nAbout to ERASE (zero-fill) — this WRITES zeros to the device:");
     print_partition_plan(
         &format!("{} (id {})", entry.partition, entry.partition_id),
         size,
-        &params,
+        params,
     );
     if !confirm_flash(&entry.partition, assume_yes)? {
         println!("Aborted — nothing was written.");
-        return finish_session(odin, Finish::Leave);
+        return Ok(false);
     }
 
     println!("\nErasing {}…", entry.partition);
@@ -964,7 +1101,7 @@ fn cmd_erase(args: &[String]) -> Result<(), Box<dyn Error>> {
         entry.partition,
         progress::human_bytes(size)
     );
-    finish_session(odin, parse_finish(finish_flag)?)
+    Ok(true)
 }
 
 /// Set the device's region (CSC) code. **UNVERIFIED** — in the reference tool this shares
@@ -985,16 +1122,34 @@ fn cmd_set_region(args: &[String]) -> Result<(), Box<dyn Error>> {
         return Err(format!("would set region to {code} — re-run with --execute to do it").into());
     }
     let mut odin = open_session()?;
+    let did = set_region_core(&mut odin, &code, a.assume_yes)?;
+    finish_session(
+        odin,
+        if did {
+            parse_finish(a.finish)?
+        } else {
+            Finish::Leave
+        },
+    )
+}
+
+/// Set the region (CSC) code over the borrowed session. Returns `true` if it set it, `false`
+/// on abort. Shared by the CLI and the shell. Unverified (F8) — may enable T-Flash instead.
+fn set_region_core<T: Transport>(
+    odin: &mut Odin<T>,
+    code: &str,
+    assume_yes: bool,
+) -> Result<bool, Box<dyn Error>> {
     let warn = "UNVERIFIED — in the reference tool 'set region' shares opcode 0x08 with \
                 T-Flash enable (likely a bug), so this may enable T-Flash rather than change \
                 the region. See docs/port/roadmap.md (F8).";
-    if !confirm_typed("YES", Some(warn), a.assume_yes)? {
+    if !confirm_typed("YES", Some(warn), assume_yes)? {
         println!("Aborted — region unchanged.");
-        return finish_session(odin, Finish::Leave);
+        return Ok(false);
     }
-    odin.set_region_code(&code)?;
+    odin.set_region_code(code)?;
     println!("Region code set to {code}.");
-    finish_session(odin, parse_finish(a.finish)?)
+    Ok(true)
 }
 
 /// Connect to a Samsung device that is in **upload mode** (SUC), confirming with the preamble
