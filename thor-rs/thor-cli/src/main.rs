@@ -13,6 +13,14 @@ use std::error::Error;
 use std::io::{IsTerminal, Read, Seek, Write};
 use std::process::ExitCode;
 
+use rustyline::completion::Completer;
+use rustyline::error::ReadlineError;
+use rustyline::highlight::Highlighter;
+use rustyline::hint::Hinter;
+use rustyline::history::DefaultHistory;
+use rustyline::validate::Validator;
+use rustyline::{Context, Editor, Helper};
+
 use thor_core::archive::{
     for_each_image, list_archive_images, list_tar, lz4_content_size, lz4_stream_reader,
 };
@@ -80,53 +88,151 @@ fn print_usage() {
     );
 }
 
+/// Commands the shell understands — also the tab-completion set.
+const SHELL_COMMANDS: &[&str] = &[
+    "help",
+    "pit",
+    "print-pit",
+    "dump-pit",
+    "flash-plan",
+    "tar-list",
+    "reboot",
+    "end",
+    "shutdown",
+    "quit",
+    "exit",
+];
+
+/// How the shell loop wants to leave: run a session-ending action, or just detach.
+enum ShellExit {
+    Finish(Finish),
+    Leave,
+}
+
 /// Interactive REPL over a single persistent Odin session. Because a download-mode
 /// connection can't be reused across invocations, this is the ergonomic way to run several
-/// operations: connect once, then dump / plan / reboot without reconnecting.
+/// operations: connect once, then dump / plan / reboot without reconnecting. Line editing,
+/// history, and tab-completion come from rustyline.
 fn cmd_shell() -> Result<(), Box<dyn Error>> {
     let mut odin = open_session()?;
-    println!("\nInteractive Odin session — type 'help' for commands.");
-    let stdin = std::io::stdin();
-    loop {
-        print!("thor> ");
-        std::io::stdout().flush()?;
-        let mut line = String::new();
-        if stdin.read_line(&mut line)? == 0 {
-            println!();
-            break; // EOF (Ctrl-D)
+    println!(
+        "\nInteractive Odin session. Tab completes commands · ↑/↓ history · \
+         Ctrl-A/E/U/K/W line editing · Ctrl-R search · Ctrl-C cancels a line · \
+         Ctrl-D or 'quit' exits.\nType 'help' for commands."
+    );
+
+    let mut rl: Editor<ShellHelper, DefaultHistory> = Editor::new()?;
+    rl.set_helper(Some(ShellHelper::new()));
+    let hist = history_path();
+    if let Some(h) = &hist {
+        let _ = rl.load_history(h);
+    }
+
+    let exit = loop {
+        match rl.readline("thor> ") {
+            Ok(line) => {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                let _ = rl.add_history_entry(line);
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                let (cmd, cmd_args) = parts.split_first().expect("non-empty line");
+                match *cmd {
+                    "help" | "?" => print_shell_help(),
+                    "pit" | "print-pit" => report(shell_print_pit(&mut odin)),
+                    "dump-pit" => report(shell_dump_pit(&mut odin, cmd_args)),
+                    "flash-plan" => report(shell_flash_plan(&mut odin, cmd_args)),
+                    "tar-list" => report(shell_tar_list(cmd_args)),
+                    "reboot" => match cmd_args.first().copied() {
+                        None | Some("normal") => break ShellExit::Finish(Finish::RebootNormal),
+                        Some("download") => break ShellExit::Finish(Finish::RebootDownload),
+                        Some(o) => eprintln!("unknown reboot mode '{o}' (use normal | download)"),
+                    },
+                    "end" | "shutdown" => break ShellExit::Finish(Finish::Shutdown),
+                    "quit" | "exit" => break ShellExit::Leave,
+                    other => eprintln!("unknown command '{other}' (try 'help')"),
+                }
+            }
+            Err(ReadlineError::Interrupted) => println!("(^C — 'quit' or Ctrl-D to exit)"),
+            Err(ReadlineError::Eof) => break ShellExit::Leave,
+            Err(e) => {
+                eprintln!("input error: {e}");
+                break ShellExit::Leave;
+            }
         }
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        let (cmd, cmd_args) = match parts.split_first() {
-            Some(x) => x,
-            None => continue,
-        };
-        match *cmd {
-            "help" | "?" => print_shell_help(),
-            "pit" | "print-pit" => report(shell_print_pit(&mut odin)),
-            "dump-pit" => report(shell_dump_pit(&mut odin, cmd_args)),
-            "flash-plan" => report(shell_flash_plan(&mut odin, cmd_args)),
-            "tar-list" => report(shell_tar_list(cmd_args)),
-            "reboot" => {
-                let finish = match cmd_args.first().copied() {
-                    None | Some("normal") => Finish::RebootNormal,
-                    Some("download") => Finish::RebootDownload,
-                    Some(o) => {
-                        eprintln!("unknown reboot mode '{o}' (use normal | download)");
-                        continue;
-                    }
-                };
-                return finish_session(odin, finish);
-            }
-            "end" | "shutdown" => return finish_session(odin, Finish::Shutdown),
-            "quit" | "exit" => {
-                println!("Leaving — device stays in download mode (run 'thor reboot' to exit).");
-                return Ok(());
-            }
-            other => eprintln!("unknown command '{other}' (try 'help')"),
+    };
+
+    if let Some(h) = &hist {
+        let _ = rl.save_history(h);
+    }
+
+    match exit {
+        ShellExit::Finish(f) => finish_session(odin, f),
+        ShellExit::Leave => {
+            println!("Leaving — device stays in download mode (run 'thor reboot' to exit).");
+            Ok(())
         }
     }
-    Ok(())
 }
+
+/// Path to the shell's persistent history file (`~/.thor_history`), if `$HOME` is set.
+fn history_path() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME").map(|h| std::path::Path::new(&h).join(".thor_history"))
+}
+
+/// Tab-completion for the shell: complete the **first** word against [`SHELL_COMMANDS`].
+/// Returns the replacement start offset and the matching command names.
+fn complete_command(line: &str, pos: usize, commands: &[&str]) -> (usize, Vec<String>) {
+    let before = &line[..pos.min(line.len())];
+    let start = before
+        .rfind(char::is_whitespace)
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    // Only the command (first token) is completed; args are left to the user.
+    if !before[..start].trim().is_empty() {
+        return (start, Vec::new());
+    }
+    let word = &before[start..];
+    let cands = commands
+        .iter()
+        .filter(|c| c.starts_with(word))
+        .map(|c| c.to_string())
+        .collect();
+    (start, cands)
+}
+
+/// rustyline helper: command completion, no hints/highlighting/validation.
+struct ShellHelper {
+    commands: Vec<&'static str>,
+}
+
+impl ShellHelper {
+    fn new() -> Self {
+        ShellHelper {
+            commands: SHELL_COMMANDS.to_vec(),
+        }
+    }
+}
+
+impl Completer for ShellHelper {
+    type Candidate = String;
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        _ctx: &Context<'_>,
+    ) -> Result<(usize, Vec<String>), ReadlineError> {
+        Ok(complete_command(line, pos, &self.commands))
+    }
+}
+
+impl Hinter for ShellHelper {
+    type Hint = String;
+}
+impl Highlighter for ShellHelper {}
+impl Validator for ShellHelper {}
+impl Helper for ShellHelper {}
 
 /// Print an error from a shell subcommand without tearing down the session.
 fn report(result: Result<(), Box<dyn Error>>) {
@@ -1219,5 +1325,39 @@ fn print_pit(pit: &PitData) {
         } else {
             println!("    Delta Name: {}", e.delta_name);
         }
+    }
+}
+
+#[cfg(test)]
+mod shell_tests {
+    use super::{complete_command, SHELL_COMMANDS};
+
+    #[test]
+    fn completes_a_command_prefix() {
+        let (start, cands) = complete_command("du", 2, SHELL_COMMANDS);
+        assert_eq!(start, 0);
+        assert_eq!(cands, vec!["dump-pit".to_string()]);
+    }
+
+    #[test]
+    fn empty_prefix_offers_every_command() {
+        let (_, cands) = complete_command("", 0, SHELL_COMMANDS);
+        assert_eq!(cands.len(), SHELL_COMMANDS.len());
+    }
+
+    #[test]
+    fn multiple_matches_are_all_returned() {
+        // "e" matches "end" and "exit".
+        let (_, cands) = complete_command("e", 1, SHELL_COMMANDS);
+        assert!(cands.contains(&"end".to_string()));
+        assert!(cands.contains(&"exit".to_string()));
+    }
+
+    #[test]
+    fn arguments_are_not_completed_as_commands() {
+        // Cursor is in the second token -> no command candidates.
+        let (start, cands) = complete_command("flash-plan bo", 13, SHELL_COMMANDS);
+        assert_eq!(start, 11);
+        assert!(cands.is_empty());
     }
 }

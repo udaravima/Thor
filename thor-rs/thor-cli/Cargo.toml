@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 thor-core = { path = "../thor-core" }
+rustyline = "14"
 
 [lints]
 workspace = true

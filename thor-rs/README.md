@@ -27,7 +27,7 @@ support, a testable engine, and a scriptable CLI.
 | `thor set-region <XAA> --execute [--yes]` | Set the CSC region code — **unverified** (shares an opcode with T-Flash in the original; may enable T-Flash instead). Type `YES` to confirm |
 | `thor upload-probe` · `thor upload-dump <start> <end> <out>` · `thor upload-reboot` | **Upload mode (SUC):** list RAM regions and **dump memory** from a device in upload/ramdump mode — read-only. A RAM dump is a superset of "get the kernel log over USB" |
 | `thor reboot [normal\|download]` · `thor end` | Reboot / shut down the device |
-| `thor shell` | **Interactive session** — connect once, run many commands |
+| `thor shell` | **Interactive session** — connect once, run many commands. Real line editing: Tab-completion, ↑/↓ history (saved to `~/.thor_history`), Ctrl-A/E/U/K/W, Ctrl-R search, Ctrl-C/Ctrl-D |
 
 **Why `shell` exists:** a Samsung download-mode connection can't be reused across program
 runs (after the first handshake the bootloader won't handshake again), so a one-shot command
@@ -42,7 +42,7 @@ Windows/macOS but hasn't been verified there yet).
 ```sh
 cd thor-rs
 cargo build --release          # binary at target/release/thor  (~788 KB)
-cargo test                     # 77 tests, no device required
+cargo test                     # 81 tests, no device required
 ./target/release/thor list
 ```
 
