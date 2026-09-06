@@ -20,6 +20,7 @@ use thor_core::backend::{self, NusbTransport};
 use thor_core::flash::{plan_flash, FlashParams};
 use thor_core::odin::{FlashState, Odin};
 use thor_core::pit::{FieldMapper, PitData, PitEntry};
+use thor_core::upload::{Upload, UploadError};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
@@ -33,6 +34,9 @@ fn main() -> ExitCode {
         Some("factory-reset") => cmd_factory_reset(&args[2..]),
         Some("erase") => cmd_erase(&args[2..]),
         Some("set-region") => cmd_set_region(&args[2..]),
+        Some("upload-probe") => cmd_upload_probe(),
+        Some("upload-dump") => cmd_upload_dump(&args[2..]),
+        Some("upload-reboot") => cmd_upload_reboot(),
         Some("reboot") => cmd_reboot(args.get(2)),
         Some("end") => cmd_end(),
         Some("shell") => cmd_shell(),
@@ -67,6 +71,9 @@ fn print_usage() {
          \x20 thor factory-reset --execute [--yes] [--reboot|…]   Wipe /data (factory reset)\n\
          \x20 thor erase <partition> --size <bytes> --execute [--yes]   Zero-fill a partition\n\
          \x20 thor set-region <XAA> --execute [--yes]   Set the CSC region code (UNVERIFIED, see docs)\n\
+         \x20 thor upload-probe          List RAM regions of a device in upload mode (read-only)\n\
+         \x20 thor upload-dump <start> <end> <out>   Dump a memory range over upload mode\n\
+         \x20 thor upload-reboot         Reboot a device out of upload mode\n\
          \x20 thor reboot [normal|download]   Reboot the device (default normal)\n\
          \x20 thor end                  Shut the device down / end the session\n\
          \x20 thor shell                Interactive session: connect once, run many commands\n"
@@ -882,6 +889,103 @@ fn cmd_set_region(args: &[String]) -> Result<(), Box<dyn Error>> {
     odin.set_region_code(&code)?;
     println!("Region code set to {code}.");
     finish_session(odin, parse_finish(a.finish)?)
+}
+
+/// Connect to a Samsung device that is in **upload mode** (SUC), confirming with the preamble
+/// handshake. Same USB shape as download mode, different protocol.
+fn open_upload() -> Result<Upload<NusbTransport>, Box<dyn Error>> {
+    let devices = backend::list_samsung_devices()?;
+    let device = devices
+        .first()
+        .ok_or("no Samsung device found — is one connected in upload mode?")?;
+    println!(
+        "Connecting to {} (id {})",
+        device.display_name, device.identifier
+    );
+    let transport = NusbTransport::open(device)?;
+    let mut up = Upload::new(transport);
+    up.handshake()?;
+    println!("Upload mode confirmed.");
+    Ok(up)
+}
+
+/// Parse a hex address, with or without a `0x` prefix.
+fn parse_hex(s: &str) -> Result<u64, Box<dyn Error>> {
+    let t = s
+        .strip_prefix("0x")
+        .or_else(|| s.strip_prefix("0X"))
+        .unwrap_or(s);
+    u64::from_str_radix(t, 16).map_err(|_| format!("invalid hex address '{s}'").into())
+}
+
+/// List the dumpable memory regions of a device in upload mode. **Read-only.**
+fn cmd_upload_probe() -> Result<(), Box<dyn Error>> {
+    let mut up = open_upload()?;
+    let regions = up.probe()?;
+    if regions.is_empty() {
+        println!("No regions reported (some bootloaders don't expose a probe table).");
+        return Ok(());
+    }
+    println!("{} region(s):", regions.len());
+    for r in &regions {
+        println!(
+            "  {:<16} {:#018x}..{:#018x}  ({})",
+            r.name,
+            r.start,
+            r.end,
+            progress::human_bytes(r.size() as i64)
+        );
+    }
+    Ok(())
+}
+
+/// Dump a memory range from a device in upload mode to a file. **Read-only** (reads RAM).
+fn cmd_upload_dump(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let usage = "usage: thor upload-dump <start> <end> <outfile>  (addresses in hex)";
+    let start = parse_hex(args.first().ok_or(usage)?)?;
+    let end = parse_hex(args.get(1).ok_or(usage)?)?;
+    let out = args.get(2).ok_or(usage)?;
+    if end <= start {
+        return Err("end address must be greater than start".into());
+    }
+    let total = (end - start) as i64;
+
+    let mut up = open_upload()?;
+    let mut file = std::fs::File::create(out)?;
+    println!(
+        "Dumping {} from {start:#x}..{end:#x} to {out}…",
+        progress::human_bytes(total)
+    );
+    let width = 30usize;
+    let dumped = up.dump_range(
+        start,
+        end,
+        &mut |chunk| {
+            file.write_all(chunk)
+                .map_err(|e| UploadError::Protocol(format!("writing dump: {e}")))
+        },
+        &mut |pos, tot| {
+            print!(
+                "\r  {}  {:>12}",
+                progress::progress_bar(pos as i64, tot as i64, width),
+                progress::human_bytes(pos as i64)
+            );
+            let _ = std::io::stdout().flush();
+        },
+    )?;
+    println!(
+        "\nDumped {} to {out}. (carve dmesg from it offline — the printk ring buffer lives in RAM)",
+        progress::human_bytes(dumped as i64)
+    );
+    Ok(())
+}
+
+/// Reboot a device out of upload mode.
+fn cmd_upload_reboot() -> Result<(), Box<dyn Error>> {
+    let mut up = open_upload()?;
+    up.power_down()?;
+    println!("Rebooting out of upload mode.");
+    Ok(())
 }
 
 /// Open `file` as a flash source, returning the reader and the number of bytes that will

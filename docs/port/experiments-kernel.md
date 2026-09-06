@@ -30,6 +30,37 @@ kernel required, just the stock upload-mode path.
 - **Caveats:** requires the device to be *in* upload mode (panic or SysDump-armed); debug
   level gating varies by model; on locked/newer devices this may be restricted.
 
+### The SUC wire protocol (verified 2026-09-06 from `bkerler/sboot_dump/samupload.py`)
+
+Same USB shape as Odin: **VID/PID `04e8:685d`**, interface **class 10** (CDC-data), bulk
+in/out — i.e. our existing `Transport`/`backend` reaches it unchanged. (Note: `685d` is the
+*same PID the bench device reports in download mode* — the upload-mode interface is reachable
+on the same hardware once it's armed.) The framing is ASCII, in Samsung's signature
+mixed-case magic-string style:
+
+| Step | Host → device | Device → host |
+|------|---------------|---------------|
+| Detect / are-you-there | `PrEaMbLe\0` | `AcKnOwLeDgMeNt\0` (yes) or `NeGaTiVeAcKmNt\0` (no) — neither ⇒ not in upload mode |
+| Probe regions | `PrObE\0` | up to `0x8000` bytes: a table of dumpable regions (RAM / FTL / CP), each an entry of `type`, null-terminated `name` (≤16–20 bytes), `start`, `end`; a leading `+` marks 64-bit addressing |
+| Dump `[start,end)` | `PrEaMbLe\0`, then start & end as **ASCII hex** strings, then `DaTaXfEr\0` | streams the range in chunks; host sends `AcKnOwLeDgMeNt\0` after each chunk; device sends `PoStAmBlE\0` at end |
+| Reboot | `PoWeRdOwN\0` | — |
+
+Two clean, independently testable pieces fall out: **(a)** a probe-table parser (bytes → list
+of regions), and **(b)** a dump state machine (preamble → hex range → `DaTaXfEr` → ack-per-chunk
+→ `PoStAmBlE`). Both are pure and mockable with our existing `MockTransport` — no hardware to
+write the tests. Only *running* it end-to-end needs a device in upload mode.
+
+### ✅ Built (2026-09-06) — `thor-core::upload`
+
+Implemented as a `thor-core` module (`upload.rs`) over the existing `Transport`, TDD with the
+mock (9 tests): `parse_probe_table` (both 32- and 64-bit entry layouts), `Upload::handshake`
+(preamble → ack, else `NotUploadMode`), `probe`, `dump_range` (the ack-per-chunk/postamble
+loop), and `power_down`. CLI: `thor upload-probe`, `thor upload-dump <start> <end> <out>`,
+`thor upload-reboot` — all **read-only** (dumping RAM writes nothing to the device). The one
+part still needing a hardware capture to confirm is the exact address framing on the wire
+(fixed-width ASCII hex is our reading of `samupload.py`); it's marked as such in the code.
+Still to do: a `dmesg`/`__log_buf` carver that pulls the `printk` ring buffer out of a dump.
+
 ## 2. UART jig — real serial console from a resistor on the USB ID pin
 
 Samsung's micro-USB/USB-C port doubles as a **3.3V TTL UART** when a specific resistor sits
