@@ -1,0 +1,46 @@
+name: Rust (thor-rs)
+
+on:
+  push:
+    paths:
+      - 'thor-rs/**'
+      - '.github/workflows/rust.yml'
+  pull_request:
+    paths:
+      - 'thor-rs/**'
+      - '.github/workflows/rust.yml'
+
+defaults:
+  run:
+    working-directory: thor-rs
+
+jobs:
+  # Formatting + lints, once, on Linux.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: rustfmt
+        run: cargo fmt --all --check
+      - name: clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+  # The test suite is device-free, so running it on every OS also proves the port builds and
+  # works cross-platform (the whole reason we chose nusb).
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: thor-rs
+      - name: test
+        run: cargo test --all

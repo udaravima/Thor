@@ -3,6 +3,13 @@
 ![badges](https://img.shields.io/github/stars/Samsung-Loki/Thor.svg)
 ![badges](https://img.shields.io/github/issues/Samsung-Loki/Thor.svg)
 # Thor Flash Utility
+
+> **This fork also contains a from-scratch Rust port** under [`thor-rs/`](thor-rs/) — a
+> cross-platform reimplementation (Linux/Windows/macOS via `nusb`, no libusb) with a
+> test-driven engine, a scriptable CLI plus an interactive shell, live flashing, the full Odin
+> command set, upload-mode RAM dumping with a kernel-log (`dmesg`) carver, and a `--debug` wire
+> trace. See [`thor-rs/README.md`](thor-rs/README.md). The C# tool below is the original.
+
 This is a flash utility for Samsung devices, made from scratch in C#. \
 To run this, you must have .NET 7 runtime installed on your computer. \
 **This tool was tested and works flawlessly, I'm open for any bug reports.**
