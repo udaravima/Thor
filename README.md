@@ -1,7 +1,7 @@
-![badges](https://img.shields.io/github/contributors/Samsung-Loki/Thor.svg)
-![badges](https://img.shields.io/github/forks/Samsung-Loki/Thor.svg)
-![badges](https://img.shields.io/github/stars/Samsung-Loki/Thor.svg)
-![badges](https://img.shields.io/github/issues/Samsung-Loki/Thor.svg)
+![badges](https://img.shields.io/github/contributors/udaravima/Thor.svg)
+![badges](https://img.shields.io/github/forks/udaravima/Thor.svg)
+![badges](https://img.shields.io/github/stars/udaravima/Thor.svg)
+![badges](https://img.shields.io/github/issues/udaravima/Thor.svg)
 # Thor Flash Utility
 
 > **This fork also contains a from-scratch Rust port** under [`thor-rs/`](thor-rs/) — a

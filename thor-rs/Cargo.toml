@@ -7,7 +7,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.74"
 license = "MPL-2.0"
-repository = "https://github.com/Samsung-Loki/Thor"
+repository = "https://github.com/udaravima/Thor"
 keywords = ["samsung", "odin", "firmware", "flashing", "android"]
 categories = ["command-line-utilities", "hardware-support"]
 
