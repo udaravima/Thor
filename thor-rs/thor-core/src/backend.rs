@@ -127,6 +127,7 @@ fn find_bulk_interface(device: &Device) -> Result<(u8, u8, u8), UsbError> {
 
 impl Transport for NusbTransport {
     fn bulk_write(&mut self, data: &[u8], timeout: Duration) -> Result<(), UsbError> {
+        crate::trace::log_write(data);
         let completion = self.ep_out.transfer_blocking(Buffer::from(data), timeout);
         completion.status.map_err(map_transfer_err)?;
         Ok(())
@@ -146,6 +147,8 @@ impl Transport for NusbTransport {
             .ep_in
             .transfer_blocking(Buffer::new(requested), timeout);
         completion.status.map_err(map_transfer_err)?;
-        Ok(completion.buffer[..completion.actual_len].to_vec())
+        let out = completion.buffer[..completion.actual_len].to_vec();
+        crate::trace::log_read(&out);
+        Ok(out)
     }
 }

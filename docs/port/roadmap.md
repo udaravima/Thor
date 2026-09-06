@@ -151,6 +151,19 @@ mock tests → 63 total):
 All four are dry-run-by-default (`--execute` to act), refuse a non-interactive stdin without
 `--yes`, and reuse the same typed-confirmation gate as `flash`. Nothing fired at real hardware.
 
+### Open-source hardening (2026-09-06)
+
+For publishing to the Samsung dev community — full protocol coverage + visibility:
+
+- **`flash_pit`** (`0x65/0x00→0x02→send→0x03`) — the last missing C# Odin command, now ported
+  (TDD). CLI/shell `flash-pit <file.pit>`: validates the file is a real PIT first, then gates
+  behind the strongest confirmation (type `FLASHPIT`) because a wrong PIT is the surest brick.
+  With this, every command in the reference `Odin.cs` has an equivalent here.
+- **Wire trace / debug mode** (`thor-core::trace`) — a process-wide toggle (`--debug`,
+  `THOR_DEBUG=1`, or `debug on` in the shell) that logs every bulk write/read to stderr, each
+  outgoing command decoded to its region/sub-command name with a hex preview. Lets contributors
+  *see how the device is talking*. The decoder is pure and unit-tested.
+
 ## Community research (2026-09-06) — hidden mechanisms & protocol updates
 
 Sweep of Heimdall, XDA, and download-mode write-ups for anything we should keep in mind. What's

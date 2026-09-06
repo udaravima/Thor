@@ -14,5 +14,6 @@ pub mod flash;
 pub mod odin;
 pub mod pit;
 pub mod proto;
+pub mod trace;
 pub mod transport;
 pub mod upload;

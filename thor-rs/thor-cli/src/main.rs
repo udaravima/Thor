@@ -32,7 +32,13 @@ use thor_core::transport::Transport;
 use thor_core::upload::{Upload, UploadError};
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().collect();
+    let mut args: Vec<String> = std::env::args().collect();
+    // Wire tracing: `--debug` anywhere, or THOR_DEBUG in the environment.
+    if std::env::var_os("THOR_DEBUG").is_some() || args.iter().any(|a| a == "--debug") {
+        thor_core::trace::set_trace(true);
+    }
+    args.retain(|a| a != "--debug");
+
     let result = match args.get(1).map(String::as_str) {
         Some("list") => cmd_list(),
         Some("dump-pit") => cmd_dump_pit(&args[2..]),
@@ -43,6 +49,7 @@ fn main() -> ExitCode {
         Some("factory-reset") => cmd_factory_reset(&args[2..]),
         Some("erase") => cmd_erase(&args[2..]),
         Some("set-region") => cmd_set_region(&args[2..]),
+        Some("flash-pit") => cmd_flash_pit(&args[2..]),
         Some("upload-probe") => cmd_upload_probe(),
         Some("upload-dump") => cmd_upload_dump(&args[2..]),
         Some("upload-reboot") => cmd_upload_reboot(),
@@ -80,6 +87,7 @@ fn print_usage() {
          \x20 thor factory-reset --execute [--yes] [--reboot|…]   Wipe /data (factory reset)\n\
          \x20 thor erase <partition> --size <bytes> --execute [--yes]   Zero-fill a partition\n\
          \x20 thor set-region <XAA> --execute [--yes]   Set the CSC region code (UNVERIFIED, see docs)\n\
+         \x20 thor flash-pit <file.pit> --execute [--yes]   Repartition the device (VERY destructive)\n\
          \x20 thor upload-probe          List RAM regions of a device in upload mode (read-only)\n\
          \x20 thor upload-dump <start> <end> <out>   Dump a memory range over upload mode\n\
          \x20 thor upload-reboot         Reboot a device out of upload mode\n\
@@ -100,7 +108,9 @@ const SHELL_COMMANDS: &[&str] = &[
     "factory-reset",
     "erase",
     "set-region",
+    "flash-pit",
     "tar-list",
+    "debug",
     "reboot",
     "end",
     "shutdown",
@@ -152,7 +162,23 @@ fn cmd_shell() -> Result<(), Box<dyn Error>> {
                     "factory-reset" => report(shell_factory_reset(&mut odin)),
                     "erase" => report(shell_erase(&mut odin, cmd_args)),
                     "set-region" => report(shell_set_region(&mut odin, cmd_args)),
+                    "flash-pit" => report(shell_flash_pit(&mut odin, cmd_args)),
                     "tar-list" => report(shell_tar_list(cmd_args)),
+                    "debug" => {
+                        match cmd_args.first().copied() {
+                            Some("on") => thor_core::trace::set_trace(true),
+                            Some("off") => thor_core::trace::set_trace(false),
+                            _ => {}
+                        }
+                        println!(
+                            "wire trace is {}",
+                            if thor_core::trace::trace_enabled() {
+                                "ON"
+                            } else {
+                                "OFF"
+                            }
+                        );
+                    }
                     "reboot" => match cmd_args.first().copied() {
                         None | Some("normal") => break ShellExit::Finish(Finish::RebootNormal),
                         Some("download") => break ShellExit::Finish(Finish::RebootDownload),
@@ -259,7 +285,9 @@ fn print_shell_help() {
          \x20 factory-reset                  wipe /data (type ERASE)\n\
          \x20 erase <partition> --size <n>   zero-fill a partition (type the name)\n\
          \x20 set-region <XAA>               set the CSC region code (UNVERIFIED)\n\
+         \x20 flash-pit <file.pit>           repartition the device (type FLASHPIT)\n\
          \x20 tar-list <archive>             list an Odin .tar/.tar.md5\n\
+         \x20 debug [on|off]                 toggle/show the USB wire trace\n\
          \x20 reboot [normal|download]       reboot the device and exit\n\
          \x20 end                            shut the device down and exit\n\
          \x20 quit | exit                    leave (device stays in download mode)"
@@ -348,6 +376,15 @@ fn shell_set_region(odin: &mut Odin<NusbTransport>, args: &[&str]) -> Result<(),
         return Err("a region code is exactly 3 characters (e.g. XAA)".into());
     }
     set_region_core(odin, &code.to_ascii_uppercase(), false)?;
+    Ok(())
+}
+
+/// Flash a PIT (repartition) from inside the shell: `flash-pit <file.pit>`.
+fn shell_flash_pit(odin: &mut Odin<NusbTransport>, args: &[&str]) -> Result<(), Box<dyn Error>> {
+    let file = *args.first().ok_or("usage: flash-pit <file.pit>")?;
+    let content = std::fs::read(file)?;
+    PitData::parse(&content).map_err(|e| format!("{file} isn't a valid PIT: {e}"))?;
+    flash_pit_core(odin, &content, false)?;
     Ok(())
 }
 
@@ -1150,6 +1187,56 @@ fn set_region_core<T: Transport>(
     odin.set_region_code(code)?;
     println!("Region code set to {code}.");
     Ok(true)
+}
+
+/// Flash a PIT (repartition) over the borrowed session. Returns `true` if it flashed, `false`
+/// on abort. The strongest gate — a wrong PIT hard-bricks — so it requires typing `FLASHPIT`.
+fn flash_pit_core<T: Transport>(
+    odin: &mut Odin<T>,
+    content: &[u8],
+    assume_yes: bool,
+) -> Result<bool, Box<dyn Error>> {
+    println!(
+        "\nAbout to FLASH THE PIT — this REPARTITIONS the device ({} bytes).",
+        content.len()
+    );
+    let warn = "a wrong or mismatched PIT repartitions the device and is a classic way to \
+                HARD-BRICK it. Only flash a PIT that exactly matches this device's firmware.";
+    if !confirm_typed("FLASHPIT", Some(warn), assume_yes)? {
+        println!("Aborted — the partition table was not changed.");
+        return Ok(false);
+    }
+    println!("\nFlashing PIT…");
+    odin.flash_pit(content)?;
+    println!("PIT flashed.");
+    Ok(true)
+}
+
+/// **Very destructive.** Repartition the device from a `.pit` file. The file is validated as a
+/// real PIT before anything is sent.
+fn cmd_flash_pit(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let a = parse_action_args(args)?;
+    let file = *a
+        .positional
+        .first()
+        .ok_or("usage: thor flash-pit <file.pit> --execute [--yes]")?;
+    if !a.execute {
+        return Err("flash-pit repartitions the device — re-run with --execute to do it".into());
+    }
+    let content = std::fs::read(file)?;
+    // Refuse anything that isn't actually a PIT before we touch the device.
+    PitData::parse(&content).map_err(|e| format!("{file} isn't a valid PIT: {e}"))?;
+
+    let mut odin = open_session()?;
+    let did = flash_pit_core(&mut odin, &content, a.assume_yes)?;
+    finish_session(
+        odin,
+        if did {
+            parse_finish(a.finish)?
+        } else {
+            Finish::Leave
+        },
+    )
 }
 
 /// Connect to a Samsung device that is in **upload mode** (SUC), confirming with the preamble

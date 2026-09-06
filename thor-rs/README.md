@@ -25,6 +25,7 @@ support, a testable engine, and a scriptable CLI.
 | `thor factory-reset --execute [--yes]` | Wipe `/data` (factory reset). Type `ERASE` to confirm |
 | `thor erase <partition> --size <bytes> --execute [--yes]` | Zero-fill a partition. Type the partition name to confirm |
 | `thor set-region <XAA> --execute [--yes]` | Set the CSC region code — **unverified** (shares an opcode with T-Flash in the original; may enable T-Flash instead). Type `YES` to confirm |
+| `thor flash-pit <file.pit> --execute [--yes]` | **Repartition** the device from a PIT (validated first). The most brick-prone command — type `FLASHPIT` to confirm |
 | `thor upload-probe` · `thor upload-dump <start> <end> <out>` · `thor upload-reboot` | **Upload mode (SUC):** list RAM regions and **dump memory** from a device in upload/ramdump mode — read-only. A RAM dump is a superset of "get the kernel log over USB" |
 | `thor reboot [normal\|download]` · `thor end` | Reboot / shut down the device |
 | `thor shell` | **Interactive session** — connect once, run many commands. Real line editing: Tab-completion, ↑/↓ history (saved to `~/.thor_history`), Ctrl-A/E/U/K/W, Ctrl-R search, Ctrl-C/Ctrl-D |
@@ -42,7 +43,7 @@ Windows/macOS but hasn't been verified there yet).
 ```sh
 cd thor-rs
 cargo build --release          # binary at target/release/thor  (~788 KB)
-cargo test                     # 81 tests, no device required
+cargo test                     # 89 tests, no device required
 ./target/release/thor list
 ```
 
@@ -69,6 +70,19 @@ thor flash-plan --pit dev_files/sample-pit.pit AP_XXX.tar.md5
 Matches every image in the archive to a PIT partition, resolves `.lz4` sizes from the frame
 header, and prints the sequence/part plan for each — a safe way to see what a real flash
 would do.
+
+## Seeing the protocol (debug trace)
+
+Run any command with `--debug` (or `THOR_DEBUG=1`, or `debug on` in the shell) to trace every
+USB bulk transfer to stderr — each outgoing command decoded to its Odin region/sub-command
+name, with a hex preview:
+
+```
+→ BeginSession (region=0x64 sub=0x00) [1024B]   64 00 00 00 00 00 00 00 ff ff ff 7f …
+← 8B   00 00 00 00 03 00 00 00
+```
+
+Handy for understanding the wire protocol or debugging a device that misbehaves.
 
 ## How it's built
 

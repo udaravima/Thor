@@ -307,6 +307,32 @@ impl<T: Transport> Odin<T> {
         Ok(pit)
     }
 
+    /// Flash a PIT — **repartition the device**. Extremely destructive: a wrong PIT bricks it.
+    /// Mirrors the C# `FlashPIT`: request (`0x65/0x00`), begin-with-size (`0x65/0x02`), send
+    /// the raw bytes (acked with a long timeout), end (`0x65/0x03`).
+    pub fn flash_pit(&mut self, content: &[u8]) -> Result<(), OdinError> {
+        // 1. Request PIT flash.
+        let cmd = Packet::command(region::PIT, 0x00);
+        self.transport.bulk_write(cmd.as_bytes(), DEFAULT_TIMEOUT)?;
+        ack(&mut self.transport, 8)?;
+
+        // 2. Begin PIT flash, announcing the size.
+        let mut cmd = Packet::command(region::PIT, 0x02);
+        cmd.write_i32(8, content.len() as i32);
+        self.transport.bulk_write(cmd.as_bytes(), DEFAULT_TIMEOUT)?;
+        ack(&mut self.transport, 8)?;
+
+        // 3. Send the raw PIT; the device commits it here, so allow a long timeout.
+        self.transport.bulk_write(content, DEFAULT_TIMEOUT)?;
+        ack_with(&mut self.transport, 8, Duration::from_millis(120_000))?;
+
+        // 4. End PIT flash.
+        let cmd = Packet::command(region::PIT, 0x03);
+        self.transport.bulk_write(cmd.as_bytes(), DEFAULT_TIMEOUT)?;
+        ack(&mut self.transport, 8)?;
+        Ok(())
+    }
+
     /// End the Odin session cleanly (`EndSession`, 0x67/0x00), leaving the device in
     /// download mode.
     pub fn end_session(&mut self) -> Result<(), OdinError> {
@@ -735,6 +761,27 @@ mod tests {
             assert_eq!(&mock.writes[i][0..4], le(*region).as_slice());
             assert_eq!(&mock.writes[i][4..8], le(*sub).as_slice());
         }
+    }
+
+    #[test]
+    fn flash_pit_sends_request_begin_send_end() {
+        let content = vec![0x12u8; 40];
+        let mut mock = MockTransport::with_reads(vec![ack0(), ack0(), ack0(), ack0()]);
+        {
+            let mut odin = Odin::new(&mut mock);
+            odin.flash_pit(&content).unwrap();
+        }
+        let w = &mock.writes;
+        // request PIT flash: 0x65/0x00
+        assert_eq!(&w[0][0..4], &le(0x65));
+        assert_eq!(&w[0][4..8], &le(0x00));
+        // begin PIT flash: 0x65/0x02 with the length at offset 8
+        assert_eq!(&w[1][4..8], &le(0x02));
+        assert_eq!(&w[1][8..12], &le(40));
+        // the raw PIT bytes, sent verbatim
+        assert_eq!(w[2], content);
+        // end PIT flash: 0x65/0x03
+        assert_eq!(&w[3][4..8], &le(0x03));
     }
 
     #[test]
