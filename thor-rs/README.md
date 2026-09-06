@@ -5,12 +5,12 @@ Samsung's **Odin** firmware flasher, which talks to Galaxy devices in **download
 USB. This port keeps what makes Thor special (raw USB, no libusb) while adding cross-platform
 support, a testable engine, and a scriptable CLI.
 
-> **Status: read-only + dry-run validated on real hardware; all write operations built and
-> gated.** Every non-destructive operation is proven byte-for-byte against the reference C#
-> tool. The destructive operations — flashing a single image or a whole Odin `.tar`/`.tar.md5`,
-> factory reset, partition erase, T-Flash, region set — are all implemented behind a dry-run
-> default and a typed confirmation, but have **not** yet been fired at real hardware pending a
-> safe target (a spare device or exact stock signed firmware).
+> **Status: validated on real hardware, including live flashing.** Every read-only operation is
+> proven byte-for-byte against the reference C# tool, and the **write path is now proven on a real
+> device** — thor flashed TWRP to a Galaxy J2 (SM-J250Y) in download mode, sequence-for-sequence,
+> and the phone booted it. The remaining destructive operations (whole-archive flash, factory
+> reset, erase, T-Flash, region set) drive that same, now-exercised flash engine and stay behind a
+> dry-run default plus a typed confirmation.
 
 ## What it can do today
 
@@ -44,7 +44,7 @@ Windows/macOS but hasn't been verified there yet).
 ```sh
 cd thor-rs
 cargo build --release          # binary at target/release/thor  (~788 KB)
-cargo test                     # 98 tests, no device required
+cargo test                     # 102 tests, no device required
 ./target/release/thor list
 ```
 
@@ -120,8 +120,11 @@ against, and [`../docs/port/`](../docs/port/) for the [dev guide](../docs/port/d
 - **`set-region` is unverified.** In the reference tool it shares a command opcode with T-Flash
   enable (almost certainly a bug), so it may enable T-Flash rather than change the region. It's
   shipped with that warning, not as a trusted operation.
-- **No partition read exists** in the Odin protocol, so "dump a partition and flash it back"
-  is not available as a safety net — a safe flash target must be real signed firmware.
+- **No partition read exists** in the Odin protocol itself — download mode is write-only, so you
+  cannot dump a partition through it. On an **OEM-unlocked** device you can instead flash a custom
+  recovery (TWRP) with thor, then `dd` the raw partitions out over adb — that's how the
+  irreplaceable per-device partitions (`efs`, `modemst`, `persist`) are backed up before a flash.
+  A locked device can't take a custom recovery, so this backup path needs OEM unlock.
 - **Newest devices are locked.** Samsung disabled download mode on the Galaxy S26 / Z Fold 7
   (2026); this targets the large base of existing devices.
 
@@ -130,6 +133,13 @@ against, and [`../docs/port/`](../docs/port/) for the [dev guide](../docs/port/d
 Development was validated on a live Qualcomm-based Samsung (bootloader v3). `thor dump-pit`
 produced a PIT byte-identical to the reference C# Thor's dump, and `thor print-pit` matched
 its output field-for-field.
+
+The **write path was exercised end-to-end** on a **Galaxy J2 (SM-J250Y, `j2y18lte`, Snapdragon
+425)**: thor flashed TWRP 3.7.0 to `RECOVERY` (18.4 MB, one sequence / 18 parts) with a clean
+session and shutdown, and the phone booted it. From TWRP, every device-unique partition (`efs`,
+`modemst1/2`, `fsg`, `fsc`, `persist`, …) was dumped and verified — on-device sha256 == PC
+sha256, zero mismatches. The kernel-log (`sec_log`) buffer was located at physical `0x85200000`,
+groundwork for a no-root boot-log feature.
 
 ## License
 
