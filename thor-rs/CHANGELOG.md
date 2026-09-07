@@ -5,6 +5,17 @@ from-scratch reimplementation of the C#/.NET Thor flasher, so its version line i
 of the upstream C# tool (whose releases are tagged `1.x`). Rust-port releases are tagged
 `rust-v<version>`.
 
+## [Unreleased]
+
+### Added
+- **`thor bootlog`** — one-step boot-log extraction: in upload mode, dump the `sec_log` RAM
+  buffer and carve the kernel boot log, defaulting to the SM-J250Y `sec_log` (`0x85200000` +
+  2 MiB) so the caller needn't know the address. New `thor-core::bootlog` module (the `sec_log`
+  defaults + the "structured `printk_log`, else 5.10+ ringbuffer text" fallback), fully
+  unit-tested; a thin `--addr`/`--size`/`--out`/`--raw` CLI over the existing upload dumper and
+  dmesg carver. Core is test-validated; the upload-mode round-trip is not yet confirmed on
+  hardware, and triggering upload mode on a `sec_debug.enable=0` retail unit is still open.
+
 ## [0.1.0] — 2026-09-06
 
 First public release of the Rust port: a cross-platform, test-driven Samsung **Odin** flasher

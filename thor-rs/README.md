@@ -28,6 +28,7 @@ support, a testable engine, and a scriptable CLI.
 | `thor flash-pit <file.pit> --execute [--yes]` | **Repartition** the device from a PIT (validated first). The most brick-prone command — type `FLASHPIT` to confirm |
 | `thor upload-probe` · `thor upload-dump <start> <end> <out>` · `thor upload-reboot` | **Upload mode (SUC):** list RAM regions and **dump memory** from a device in upload/ramdump mode — read-only. A RAM dump is a superset of "get the kernel log over USB" |
 | `thor dmesg-carve <dumpfile>` · `thor upload-dmesg <start> <end>` | **Carve the kernel `printk` log** out of a RAM dump — offline from a file, or dump-and-carve live. The "USB → printk" payoff |
+| `thor bootlog [--addr <hex>] [--size <hex>] [--out <f>] [--raw <f>]` | **Boot log, no root:** in upload mode, dump the `sec_log` RAM buffer and carve the kernel boot log in one step. Defaults to the SM-J250Y `sec_log` (`0x85200000`+2 MiB) so you needn't know the address. *(Core is test-validated; the upload-mode round-trip is unverified on hardware.)* |
 | `thor reboot [normal\|download]` · `thor end` | Reboot / shut down the device |
 | `thor shell` | **Interactive session** — connect once, run many commands. Real line editing: Tab-completion, ↑/↓ history (saved to `~/.thor_history`), Ctrl-A/E/U/K/W, Ctrl-R search, Ctrl-C/Ctrl-D |
 

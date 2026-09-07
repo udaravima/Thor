@@ -54,6 +54,7 @@ fn main() -> ExitCode {
         Some("upload-dump") => cmd_upload_dump(&args[2..]),
         Some("upload-dmesg") => cmd_upload_dmesg(&args[2..]),
         Some("upload-reboot") => cmd_upload_reboot(),
+        Some("bootlog") => cmd_bootlog(&args[2..]),
         Some("dmesg-carve") => cmd_dmesg_carve(args.get(2)),
         Some("reboot") => cmd_reboot(args.get(2)),
         Some("end") => cmd_end(),
@@ -93,6 +94,9 @@ fn print_usage() {
          \x20 thor upload-probe          List RAM regions of a device in upload mode (read-only)\n\
          \x20 thor upload-dump <start> <end> <out>   Dump a memory range over upload mode\n\
          \x20 thor upload-dmesg <start> <end>   Dump a range and carve the kernel log from it\n\
+         \x20 thor bootlog [--addr <hex>] [--size <hex>] [--out <file>] [--raw <file>]\n\
+         \x20                           Carve the boot log from the sec_log RAM region (upload mode,\n\
+         \x20                           no root); defaults to the SM-J250Y sec_log if not given\n\
          \x20 thor dmesg-carve <dumpfile>   Carve the kernel log from an existing RAM dump\n\
          \x20 thor upload-reboot         Reboot a device out of upload mode\n\
          \x20 thor reboot [normal|download]   Reboot the device (default normal)\n\
@@ -1600,6 +1604,91 @@ fn cmd_upload_dmesg(args: &[String]) -> Result<(), Box<dyn Error>> {
         &mut |_, _| {},
     )?;
     carve_and_print(&mem)
+}
+
+/// Carve the kernel **boot log** out of the `sec_log` RAM region of a device in upload mode —
+/// no root, no adb. Defaults to the SM-J250Y `sec_log` (`0x85200000` + 2 MiB); override with
+/// `--addr`/`--size`. `--out` saves the carved log, `--raw` saves the raw RAM dump. **Read-only.**
+fn cmd_bootlog(args: &[String]) -> Result<(), Box<dyn Error>> {
+    use thor_core::bootlog;
+    let mut addr = bootlog::DEFAULT_SEC_LOG_ADDR;
+    let mut size = bootlog::DEFAULT_SEC_LOG_SIZE;
+    let mut out: Option<&String> = None;
+    let mut raw_out: Option<&String> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--addr" => {
+                addr = parse_hex(args.get(i + 1).ok_or("--addr needs a hex value")?)?;
+                i += 2;
+            }
+            "--size" => {
+                size = parse_hex(args.get(i + 1).ok_or("--size needs a hex value")?)?;
+                i += 2;
+            }
+            "--out" => {
+                out = Some(args.get(i + 1).ok_or("--out needs a file path")?);
+                i += 2;
+            }
+            "--raw" => {
+                raw_out = Some(args.get(i + 1).ok_or("--raw needs a file path")?);
+                i += 2;
+            }
+            other => {
+                return Err(format!(
+                    "unknown option '{other}' (use --addr/--size/--out/--raw, addresses in hex)"
+                )
+                .into())
+            }
+        }
+    }
+    if size == 0 {
+        return Err("--size must be non-zero".into());
+    }
+    let end = addr.checked_add(size).ok_or("--addr + --size overflows")?;
+
+    let mut up = open_upload()?;
+    println!(
+        "Dumping {} of RAM at {addr:#x}..{end:#x} (sec_log) to carve the boot log…",
+        progress::human_bytes(size as i64)
+    );
+    let mut mem: Vec<u8> = Vec::with_capacity(size as usize);
+    up.dump_range(
+        addr,
+        end,
+        &mut |chunk| {
+            mem.extend_from_slice(chunk);
+            Ok(())
+        },
+        &mut |_, _| {},
+    )?;
+
+    if let Some(path) = raw_out {
+        std::fs::write(path, &mem)?;
+        println!(
+            "Wrote {} of raw dump to {path}",
+            progress::human_bytes(mem.len() as i64)
+        );
+    }
+
+    let log = bootlog::carve(&mem);
+    if log.is_empty() {
+        return Err(
+            "no kernel log found in that region — wrong --addr/--size, or a format we \
+                    don't recognize"
+                .into(),
+        );
+    }
+    println!("Carved {} boot-log line(s) ({}):\n", log.len(), log.kind());
+    let lines = log.lines();
+    for l in &lines {
+        println!("{l}");
+    }
+    if let Some(path) = out {
+        std::fs::write(path, lines.join("\n") + "\n")?;
+        println!("\nWrote {} line(s) to {path}", lines.len());
+    }
+    Ok(())
 }
 
 /// Carve the kernel log from an existing RAM dump file (offline — no device). Pair with
