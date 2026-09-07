@@ -14,14 +14,15 @@ target: it predates every lockdown Samsung added later, so the whole ladder is a
 |---|---|
 | Model | SM-J250Y (Galaxy J2 2018 / "J2 Pro 2018") |
 | Codename | `j2y18lte` |
-| SoC | **Exynos 7570** (quad Cortex-A53) |
+| SoC | **Qualcomm Snapdragon 425 (MSM8917)** (quad Cortex-A53, Adreno 308) |
 | Android | 7.1.1 Nougat → 8.0/8.1 Oreo |
 | Why it's open | Ships **before** VaultKeeper auto-relock, before One UI 8 removed unlocking, before the 2026 Maintenance-Mode gate on download mode |
 
-> **Bench-device note.** The device this port was validated against reported USB product
-> string `MSM8953` — a *Qualcomm* SoC, not the Exynos 7570 of a J250Y. So either that's a
-> different unit or the string is misleading. Confirm which SoC you actually have before
-> trusting Exynos-specific details below (UART resistor, upload-mode specifics differ by SoC).
+> **Confirmed on hardware (2026-09-06).** This exact model was validated live: `adb` reports
+> `SM-J250Y` / `j2y18lte`, and the bootloader is **Qualcomm**. The `MSM8953`/`MSM8937` strings
+> seen on the wire are just Samsung's loose family labels for the **Snapdragon 425 (MSM8917)** —
+> earlier references to "Exynos 7570" here were wrong; J250Y is Qualcomm. thor flashed TWRP to
+> this device end-to-end and dumped/verified its identity partitions.
 
 ## The unlock ladder
 
@@ -79,9 +80,12 @@ can't be verified from a guide.
   boot a stripped image with **ADB root, diagnostics, and a relaxed eng-bootloader** — deep
   poking without even unlocking. These are publicly-distributed factory firmware, used here as
   a diagnostic tool, not an unlock trick.
-- **UART jig.** The USB port doubles as a 3.3 V TTL UART with the right resistor on the ID pin,
-  giving an early-boot serial console. The exact resistor is SoC/board-specific — look up the
-  `j2y18lte`/Exynos-7570 value; don't assume one. See [experiments-kernel.md](experiments-kernel.md).
+- **UART jig.** The USB port doubles as a 3.3 V TTL UART with the right resistor on the ID pin
+  (~619 kΩ on this Qualcomm family), giving a serial console. Confirmed on hardware: the retail
+  kernel ships `console=null`, so the port stays silent until you repack `boot.img` with
+  `console=ttyHSL0,115200 uart_dbg=1`. The kernel log is also copied to RAM at physical
+  `0x85200000` (`sec_log`) and exposed as `/proc/last_kmsg`. See
+  [experiments-kernel.md](experiments-kernel.md).
 
 ## Where Thor fits
 
